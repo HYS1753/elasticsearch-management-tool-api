@@ -1,0 +1,65 @@
+# 🛑 환경 변수 파일 (보안 중요!)
+env/.env
+src/resources/.env
+.env.local
+.env.development
+.env.production
+.env.test
+*.env
+gcp/googlecloud.json
+src/resources/googlecloud.json
+
+# 🛑 Local Libary 파일
+libs/*
+!libs/.nofile
+
+# 🛑 uv 설정
+uv.lock
+
+# 🛑 Python 빌드 관련 파일
+*.pyc
+*.pyo
+*.pyd
+__pycache__/
+**/__pycache__/
+*.so
+*.egg-info/
+dist/
+build/
+
+# 🛑 Poetry 관련 (가상환경 폴더)
+.venv/
+poetry.lock
+
+# 🛑 FastAPI + Uvicorn 관련 로그 파일
+*.log
+logs/
+debug.log
+
+# 🛑 IDE 관련 파일 (VSCode, PyCharm 등)
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 🛑 테스트 캐시 파일 (pytest, coverage 등)
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# 🛑 Docker 관련 파일 (Docker 사용 시)
+docker-compose.override.yml
+.dockerignore
+
+# 🛑 기타 임시 파일
+.DS_Store
+Thumbs.db
+
+# 🛑 SSL/TLS 인증서 관련 파일 제외
+#cert/
+*.crt
+*.key
+*.pem
+
+
