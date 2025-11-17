@@ -14,14 +14,14 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 cluster_endpoint = router
 
-@router.get("/nodes", response_model=CommonRes, status_code=200)
-async def health(request: Request) -> JSONResponse:
-    """ Cluster Nodes API """
+@router.get("/node-status", response_model=CommonRes, status_code=200)
+async def node_status(request: Request) -> JSONResponse:
+    """ Node Status API """
     try:
         es_client = get_elasticsearch_client(request.app)
 
         cluster_service = ElasticsearchClusterService(es_client=es_client)
-        result = await cluster_service.nodes()
+        result = await cluster_service.node_status()
 
         return JSONResponse(
             status_code=HTTP_200_OK,
@@ -41,17 +41,14 @@ async def health(request: Request) -> JSONResponse:
         )
 
 
-@router.get("/health", response_model=CommonRes, status_code=200)
-async def health(
-    request: Request,
-    index: Optional[str | List[str] | None] = Query(None, description="건강 상태를 조회할 데이터스트림/인덱스/alias 목록 (없으면 전체)")
-) -> JSONResponse:
-    """ Cluster Health API """
+@router.get("/cluster-state", response_model=CommonRes, status_code=200)
+async def cluster_state(request: Request) -> JSONResponse:
+    """ Cluster State API """
     try:
         es_client = get_elasticsearch_client(request.app)
 
         cluster_service = ElasticsearchClusterService(es_client=es_client)
-        result = await cluster_service.health(index=index)
+        result = await cluster_service.cluster_state()
 
         return JSONResponse(
             status_code=HTTP_200_OK,

@@ -3,7 +3,7 @@ from src.python.elasticsearch.application.repository.elasticsearch.entities.clus
 from src.python.elasticsearch.application.schemas.responses.cluster.cluster_health_res import ClusterHealthRes
 
 
-class ClusterHealthMapper:
+class ClusterStateMapper:
 
     @staticmethod
     def to_response(entity: ClusterHealthEntity) -> ClusterHealthRes:

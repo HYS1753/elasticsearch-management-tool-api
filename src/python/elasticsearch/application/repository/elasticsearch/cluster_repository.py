@@ -41,9 +41,9 @@ class ElasticsearchClusterRepository:
             func_name = inspect.currentframe().f_code.co_name
             raise BizException(status_code=HTTP_500_INTERNAL_SERVER_ERROR, message=f"{func_name} entity unknown error: {e}")
 
-    async def get_cluster_health(self, index: Optional[str]) -> ClusterHealthEntity:
+    async def get_cluster_health(self, index: Optional[str] = None) -> ClusterHealthEntity:
         response = await self.es_client.cluster.health(**{
-            "index": index,
+            "index": index if index else None,
             "level": "cluster",
             "local": False,
             "master_timeout": "30s",
@@ -61,3 +61,6 @@ class ElasticsearchClusterRepository:
             func_name = inspect.currentframe().f_code.co_name
             # 필요한 방식으로 처리
             raise BizException(status_code=HTTP_500_INTERNAL_SERVER_ERROR, message=f"{func_name} entity parse error: {e}")
+        except Exception as e:
+            func_name = inspect.currentframe().f_code.co_name
+            raise BizException(status_code=HTTP_500_INTERNAL_SERVER_ERROR, message=f"{func_name} entity unknown error: {e}")

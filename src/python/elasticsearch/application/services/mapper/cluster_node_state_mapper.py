@@ -5,7 +5,7 @@ from src.python.elasticsearch.application.schemas.responses.cluster.cluster_heal
 from src.python.elasticsearch.application.schemas.responses.cluster.cluster_nodes_res import ClusterNodesRes, ClusterNodeRes
 
 
-class ClusterNodesMapper:
+class ClusterNodeStateMapper:
 
     @staticmethod
     def to_response(entity: ClusterNodesEntity, master_node_id: str) -> ClusterNodesRes:
