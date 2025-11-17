@@ -14,6 +14,33 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 cluster_endpoint = router
 
+@router.get("/nodes", response_model=CommonRes, status_code=200)
+async def health(request: Request) -> JSONResponse:
+    """ Cluster Nodes API """
+    try:
+        es_client = get_elasticsearch_client(request.app)
+
+        cluster_service = ElasticsearchClusterService(es_client=es_client)
+        result = await cluster_service.nodes()
+
+        return JSONResponse(
+            status_code=HTTP_200_OK,
+            headers={"Content-Type": "application/json"},
+            content=CommonRes(data=result.model_dump(mode="json")).model_dump()
+        )
+
+    except Exception as e:
+        logger.error(f"Error in Cluster Nodes Check: {e}")
+        return JSONResponse(
+            status_code=500,
+            content=CommonRes(
+                code=str(HTTP_500_INTERNAL_SERVER_ERROR),
+                message=f"Elasticsearch 관리도구 cluster nodes 처리 중 오류가 발생했습니다: {str(e)}",
+                data=None
+            ).model_dump()
+        )
+
+
 @router.get("/health", response_model=CommonRes, status_code=200)
 async def health(
     request: Request,
