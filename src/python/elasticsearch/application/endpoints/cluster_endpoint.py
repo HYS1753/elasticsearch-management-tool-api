@@ -17,15 +17,14 @@ cluster_endpoint = router
 @router.get("/health", response_model=CommonRes, status_code=200)
 async def health(
     request: Request,
-    index: Optional[str | List[str] | None] = Query(None, description="건강 상태를 조회할 데이터스트림/인덱스/alias 목록 (없으면 전체)"),
-    level: Optional[Literal["cluster", "indices", "shards"] | None] = Query("cluster",description="반환 상세 수준"),
+    index: Optional[str | List[str] | None] = Query(None, description="건강 상태를 조회할 데이터스트림/인덱스/alias 목록 (없으면 전체)")
 ) -> JSONResponse:
     """ Cluster Health API """
     try:
         es_client = get_elasticsearch_client(request.app)
 
         cluster_service = ElasticsearchClusterService(es_client=es_client)
-        result = await cluster_service.health(index=index, level=level)
+        result = await cluster_service.health(index=index)
 
         return JSONResponse(
             status_code=HTTP_200_OK,
