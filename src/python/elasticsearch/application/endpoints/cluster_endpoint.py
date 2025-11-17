@@ -30,25 +30,25 @@ async def node_status(request: Request) -> JSONResponse:
         )
 
     except Exception as e:
-        logger.error(f"Error in Cluster Nodes Check: {e}")
+        logger.error(f"Error in Cluster Nodes Status Check: {e}")
         return JSONResponse(
             status_code=500,
             content=CommonRes(
                 code=str(HTTP_500_INTERNAL_SERVER_ERROR),
-                message=f"Elasticsearch 관리도구 cluster nodes 처리 중 오류가 발생했습니다: {str(e)}",
+                message=f"Elasticsearch 관리도구 Cluster Node Status 처리 중 오류가 발생했습니다: {str(e)}",
                 data=None
             ).model_dump()
         )
 
 
-@router.get("/cluster-state", response_model=CommonRes, status_code=200)
-async def cluster_state(request: Request) -> JSONResponse:
+@router.get("/cluster-status", response_model=CommonRes, status_code=200)
+async def cluster_status(request: Request) -> JSONResponse:
     """ Cluster State API """
     try:
         es_client = get_elasticsearch_client(request.app)
 
         cluster_service = ElasticsearchClusterService(es_client=es_client)
-        result = await cluster_service.cluster_state()
+        result = await cluster_service.cluster_status()
 
         return JSONResponse(
             status_code=HTTP_200_OK,
@@ -57,12 +57,12 @@ async def cluster_state(request: Request) -> JSONResponse:
         )
 
     except Exception as e:
-        logger.error(f"Error in Health Check: {e}")
+        logger.error(f"Error in Cluster Status Check: {e}")
         return JSONResponse(
             status_code=500,
             content=CommonRes(
                 code=str(HTTP_500_INTERNAL_SERVER_ERROR),
-                message=f"Elasticsearch 관리도구 cluster health 처리 중 오류가 발생했습니다: {str(e)}",
+                message=f"Elasticsearch 관리도구 Cluster Status 처리 중 오류가 발생했습니다: {str(e)}",
                 data=None
             ).model_dump()
         )

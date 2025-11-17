@@ -1,16 +1,16 @@
 from src.python.elasticsearch.application.repository.elasticsearch.entities.cluster_health_entity import \
     ClusterHealthEntity
-from src.python.elasticsearch.application.schemas.responses.cluster.cluster_health_res import ClusterHealthRes
+from src.python.elasticsearch.application.schemas.responses.cluster.cluster_status_res import ClusterStatusRes
 
 
-class ClusterStateMapper:
+class ClusterStatusMapper:
 
     @staticmethod
-    def to_response(entity: ClusterHealthEntity) -> ClusterHealthRes:
+    def to_response(entity: ClusterHealthEntity) -> ClusterStatusRes:
         """
         Map ClusterHealthEntity → ClusterHealthRes
         """
-        return ClusterHealthRes(
+        return ClusterStatusRes(
             cluster_name=entity.cluster_name,
             status=entity.status if entity.status in ["green", "yellow", "red"] else "unknown",
             timed_out=entity.timed_out,

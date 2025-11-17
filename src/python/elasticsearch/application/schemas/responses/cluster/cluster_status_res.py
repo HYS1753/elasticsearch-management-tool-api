@@ -4,7 +4,7 @@ from typing import Literal
 
 logger = logging.getLogger(__name__)
 
-class ClusterHealthRes(BaseModel):
+class ClusterStatusRes(BaseModel):
     cluster_name: str                       = Field(..., description="클러스터 이름")
     status: Literal["green", "yellow", "red", "unknown", "unavailable"] \
                                             = Field(..., description="클러스터 health 상태")
