@@ -15,7 +15,7 @@ from src.python.elasticsearch.application.services.mapper.node_status_mapper imp
 
 logger = logging.getLogger(__name__)
 
-class ElasticsearchClusterService:
+class ClusterService:
     def __init__(self, es_client: AsyncElasticsearch):
         self.es_client = es_client
 

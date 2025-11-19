@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.exceptions import HTTPException as StarletteHttpException
 from fastapi.exceptions import RequestValidationError
 
+from src.python.elasticsearch.application.endpoints.indices_endpoint import indices_endpoint
 from src.python.elasticsearch.config.connections.elasticsearch_connection_manager import EsConnectionManager, \
     init_elasticsearch_connection, close_elasticsearch_connection
 from src.python.elasticsearch.config.settings.env_settings import settings
@@ -77,6 +78,7 @@ app.add_exception_handler(Exception, internal_server_error_handler)
 app.add_exception_handler(BizException, biz_exception_handler)
 
 app.include_router(cluster_endpoint, prefix="/app/cluster", tags=["Elasticsearch Cluster API"])
+app.include_router(indices_endpoint, prefix="/app/indices", tags=["Elasticsearch Indices API"])
 
 if __name__ == "__main__":
     try:

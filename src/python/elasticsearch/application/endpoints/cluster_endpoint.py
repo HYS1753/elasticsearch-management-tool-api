@@ -6,7 +6,7 @@ from starlette.responses import JSONResponse
 from starlette.status import HTTP_500_INTERNAL_SERVER_ERROR, HTTP_200_OK
 
 from src.python.elasticsearch.application.schemas.responses.common.common_res import CommonRes
-from src.python.elasticsearch.application.services.api.cluster_service import ElasticsearchClusterService
+from src.python.elasticsearch.application.services.api.cluster_service import ClusterService
 from src.python.elasticsearch.config.connections.elasticsearch_connection_manager import get_elasticsearch_client
 
 logger = logging.getLogger(__name__)
@@ -20,7 +20,7 @@ async def node_status(request: Request) -> JSONResponse:
     try:
         es_client = get_elasticsearch_client(request.app)
 
-        cluster_service = ElasticsearchClusterService(es_client=es_client)
+        cluster_service = ClusterService(es_client=es_client)
         result = await cluster_service.node_status()
 
         return JSONResponse(
@@ -47,7 +47,7 @@ async def cluster_status(request: Request) -> JSONResponse:
     try:
         es_client = get_elasticsearch_client(request.app)
 
-        cluster_service = ElasticsearchClusterService(es_client=es_client)
+        cluster_service = ClusterService(es_client=es_client)
         result = await cluster_service.cluster_status()
 
         return JSONResponse(
