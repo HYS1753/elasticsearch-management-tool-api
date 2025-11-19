@@ -25,10 +25,10 @@ class IndicesService:
         master_node_id = await cat_repository.get_master_node()
         nodes_infos = await nodes_repository.get_nodes()
         shards_infos = await cat_repository.get_shards_info(exclude_hidden=exclude_hidden_index)
+        indices_infos = await cat_repository.get_indices_info(exclude_hidden=exclude_hidden_index)
 
         # 3. 닫힌 인덱스 제외 처리
         if exclude_closed_index:
-            indices_infos = await cat_repository.get_indices_info(exclude_hidden=exclude_hidden_index)
             closed_indexes = {
                 idx.index
                 for idx in indices_infos.indices
@@ -44,6 +44,7 @@ class IndicesService:
         return IndicesPlacementMapper.to_response(
             master_node_id=master_node_id,
             nodes_infos=nodes_infos,
-            shards_infos=shards_infos
+            shards_infos=shards_infos,
+            indices_infos=indices_infos
         )
 

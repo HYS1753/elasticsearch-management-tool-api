@@ -1,7 +1,8 @@
 import inspect
 from elasticsearch import AsyncElasticsearch
-from pydantic.v1 import ValidationError
+from pydantic import ValidationError
 from starlette.status import HTTP_500_INTERNAL_SERVER_ERROR
+from typing import Literal
 
 from src.python.elasticsearch.application.repository.elasticsearch.entities.cat_indices_entity import IndicesEntity, \
     IndexEntity
@@ -44,10 +45,13 @@ class ElasticsearchCatRepository:
             func_name = inspect.currentframe().f_code.co_name
             raise BizException(status_code=HTTP_500_INTERNAL_SERVER_ERROR, message=f"{func_name} entity unknown error: {e}")
 
-    async def get_indices_info(self, exclude_hidden: bool = True) -> IndicesEntity:
+    async def get_indices_info(self,
+                               status_filter: Literal["all", "closed", "hidden", "none", "open"] = "all",
+                               exclude_hidden: bool = True
+                               ) -> IndicesEntity:
         try:
             hidden_filter_path = "*,-.*" if exclude_hidden else None
-            response = await self.es_client.cat.indices(index=hidden_filter_path, format="json")
+            response = await self.es_client.cat.indices(index=hidden_filter_path, expand_wildcards=status_filter, format="json")
             indices_info = []
             for index in response:
                 indices_info.append(IndexEntity(**index))

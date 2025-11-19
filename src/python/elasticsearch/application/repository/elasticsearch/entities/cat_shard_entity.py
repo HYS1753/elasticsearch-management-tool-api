@@ -3,7 +3,7 @@ from typing import List, Any, Dict, Optional
 
 
 class ShardEntity(BaseModel):
-    id: str             = Field(..., title="Shard ID")
+    id: str             = Field(..., title="Node ID")
     index: str          = Field(..., title="Index name")
     shard: str          = Field(..., title="Shard number")
     prirep: str         = Field(..., title="Shard info(p: primary, r: replica)")
