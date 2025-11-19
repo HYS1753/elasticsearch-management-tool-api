@@ -12,13 +12,13 @@ class NodeViewRes(BaseModel):
     is_master: bool     = Field(..., title="Node Master Eligible")
 
 class ShardPlacementRes(BaseModel):
-    shard: str          = Field(..., title="Shard number")
-    prirep: str         = Field(..., title="p: primary, r: replica")
-    state: str          = Field(..., title="Shard state")
-    node_id: str        = Field(..., title="Node ID")
-    node_name: str      = Field(..., title="Node name")
-    store: str          = Field(..., title="Store size")
-    docs: str           = Field(..., title="Docs count")
+    shard: str                  = Field(..., title="Shard number")
+    prirep: str                 = Field(..., title="p: primary, r: replica")
+    state: str                  = Field(..., title="Shard state")
+    node_id: Optional[str]      = Field(..., title="Node ID")
+    node_name: Optional[str]    = Field(..., title="Node name")
+    store: Optional[str]        = Field(..., title="Store size")
+    docs: Optional[str]         = Field(..., title="Docs count")
 
 
 class IndexPlacementRes(BaseModel):
