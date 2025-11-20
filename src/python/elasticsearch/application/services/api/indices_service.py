@@ -14,8 +14,8 @@ class IndicesService:
         self.es_client = es_client
 
     async def indices_placement(self,
-                                exclude_hidden_index: bool = True,
-                                exclude_closed_index: bool = True
+                                include_hidden_index: bool = False,
+                                include_closed_index: bool = False
                                 ) -> IndicesPlacementRes:
         # 1. Respository 정의
         cat_repository = ElasticsearchCatRepository(self.es_client)
@@ -24,11 +24,11 @@ class IndicesService:
         # 2. ES 호출
         master_node_id = await cat_repository.get_master_node()
         nodes_infos = await nodes_repository.get_nodes()
-        shards_infos = await cat_repository.get_shards_info(exclude_hidden=exclude_hidden_index)
-        indices_infos = await cat_repository.get_indices_info(exclude_hidden=exclude_hidden_index)
+        shards_infos = await cat_repository.get_shards_info(exclude_hidden=(not include_hidden_index))
+        indices_infos = await cat_repository.get_indices_info(exclude_hidden=(not include_hidden_index))
 
         # 3. 닫힌 인덱스 제외 처리
-        if exclude_closed_index:
+        if not include_closed_index:
             closed_indexes = {
                 idx.index
                 for idx in indices_infos.indices

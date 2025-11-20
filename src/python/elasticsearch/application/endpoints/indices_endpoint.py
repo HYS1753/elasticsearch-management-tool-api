@@ -15,16 +15,16 @@ indices_endpoint = router
 
 @router.get("/indices-placement", response_model=CommonRes, status_code=200)
 async def indices_placement(request: Request,
-                            exclude_hidden_index: bool = Query(default=True, description="숨김 인덱스 제외 여부"),
-                            exclude_closed_index: bool = Query(default=True, description="닫힌 인덱스 제외 여부")
+                            include_hidden_index: bool = Query(default=False, description="숨김 인덱스 포함 여부"),
+                            include_closed_index: bool = Query(default=False, description="닫힌 인덱스 포함 여부")
                             ) -> JSONResponse:
     """ Indices Placement API """
     try:
         es_client = get_elasticsearch_client(request.app)
 
         cluster_service = IndicesService(es_client=es_client)
-        result = await cluster_service.indices_placement(exclude_hidden_index= exclude_hidden_index,
-                                                         exclude_closed_index=exclude_closed_index)
+        result = await cluster_service.indices_placement(include_hidden_index=include_hidden_index,
+                                                         include_closed_index=include_closed_index)
 
         return JSONResponse(
             status_code=HTTP_200_OK,
