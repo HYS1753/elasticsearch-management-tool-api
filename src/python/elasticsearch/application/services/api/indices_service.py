@@ -5,13 +5,35 @@ from elasticsearch import AsyncElasticsearch
 from src.python.elasticsearch.application.repository.elasticsearch.cat_repository import ElasticsearchCatRepository
 from src.python.elasticsearch.application.repository.elasticsearch.nodes_repository import ElasticsearchNodesRepository
 from src.python.elasticsearch.application.schemas.responses.indices.indices_placement_res import IndicesPlacementRes
+from src.python.elasticsearch.application.schemas.responses.indices.indices_res import IndicesRes
 from src.python.elasticsearch.application.services.mapper.indices_placement_mapper import IndicesPlacementMapper
+from src.python.elasticsearch.application.services.mapper.indices_mapper import IndicesMapper
 
 logger = logging.getLogger(__name__)
 
 class IndicesService:
     def __init__(self, es_client: AsyncElasticsearch):
         self.es_client = es_client
+
+    async def indices(self,
+                      include_hidden_index: bool = False,
+                      include_closed_index: bool = False
+                      ) -> IndicesRes:
+        # 1. Repository 정의
+        cat_repository = ElasticsearchCatRepository(self.es_client)
+
+        # 2. ES 호출
+        indices_infos = await cat_repository.get_indices_info(exclude_hidden=(not include_hidden_index))
+
+        # 3. 닫힌 인덱스 제외 처리
+        if not include_closed_index:
+            filtered_indices = [
+                index for index in indices_infos.indices
+                if index.status != "close"
+            ]
+            indices_infos.indices = filtered_indices
+
+        return IndicesMapper.to_response(indices_infos)
 
     async def indices_placement(self,
                                 include_hidden_index: bool = False,
