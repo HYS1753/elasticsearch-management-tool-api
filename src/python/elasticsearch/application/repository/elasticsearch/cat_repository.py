@@ -63,3 +63,17 @@ class ElasticsearchCatRepository:
         except Exception as e:
             func_name = inspect.currentframe().f_code.co_name
             raise BizException(status_code=HTTP_500_INTERNAL_SERVER_ERROR, message=f"{func_name} entity unknown error: {e}")
+
+    async def get_index_info(self, index_name: str) -> IndexEntity:
+        try:
+            response = await self.es_client.cat.indices(index=index_name, format="json")
+            if not response:
+                raise BizException(status_code=HTTP_500_INTERNAL_SERVER_ERROR, message=f"Index {index_name} not found")
+            return IndexEntity(**response[0])
+        except ValidationError as e:
+            func_name = inspect.currentframe().f_code.co_name
+            # 필요한 방식으로 처리
+            raise BizException(status_code=HTTP_500_INTERNAL_SERVER_ERROR, message=f"{func_name} entity parse error: {e}")
+        except Exception as e:
+            func_name = inspect.currentframe().f_code.co_name
+            raise BizException(status_code=HTTP_500_INTERNAL_SERVER_ERROR, message=f"{func_name} entity unknown error: {e}")
