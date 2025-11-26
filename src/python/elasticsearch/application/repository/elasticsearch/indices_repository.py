@@ -26,18 +26,4 @@ class ElasticsearchIndicesRepository:
             raise BizException(status_code=HTTP_500_INTERNAL_SERVER_ERROR, message=f"{func_name} entity unknown error: {e}")
 
     async def get_index_mappings(self, index_name: str) -> ShardsEntity:
-        try:
-            hidden_filter_path = "*,-.*" if exclude_hidden else None
-            h = "index,shard,prirep,state,node,store,docs,ur,ud,relocating_node,id"
-            response = await self.es_client.cat.shards(index=hidden_filter_path, format="json", h=h)
-            shards_info = []
-            for shard in response:
-                shards_info.append(ShardEntity(**shard))
-            return ShardsEntity(shards=shards_info)
-        except ValidationError as e:
-            func_name = inspect.currentframe().f_code.co_name
-            # 필요한 방식으로 처리
-            raise BizException(status_code=HTTP_500_INTERNAL_SERVER_ERROR, message=f"{func_name} entity parse error: {e}")
-        except Exception as e:
-            func_name = inspect.currentframe().f_code.co_name
-            raise BizException(status_code=HTTP_500_INTERNAL_SERVER_ERROR, message=f"{func_name} entity unknown error: {e}")
+        pass
