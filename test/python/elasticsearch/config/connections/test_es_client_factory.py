@@ -38,6 +38,8 @@ class TestEsClientFactory:
         mock.indices = MagicMock()
         mock.indices.get = AsyncMock()
         mock.indices.stats = AsyncMock()
+        mock.indices.get_settings = AsyncMock()
+        mock.indices.get_mapping = AsyncMock()
 
         # Nodes API
         mock.nodes = MagicMock()
