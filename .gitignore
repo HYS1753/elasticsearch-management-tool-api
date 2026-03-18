@@ -13,9 +13,6 @@ src/resources/googlecloud.json
 libs/*
 !libs/.nofile
 
-# 🛑 uv 설정
-uv.lock
-
 # 🛑 Python 빌드 관련 파일
 *.pyc
 *.pyo
