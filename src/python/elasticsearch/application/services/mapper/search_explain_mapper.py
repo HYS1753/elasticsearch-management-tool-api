@@ -125,6 +125,7 @@ def build_detail(
 
     rescores = build_rescore_details(
         rescore_nodes=rescore_nodes,
+        request_body=request_body,
         source=source
     )
 
@@ -415,21 +416,39 @@ def build_query_detail(
     source: Dict[str, Any],
     fallback_score: Optional[float] = None
 ) -> ExplainQueryDetailRes:
+    query_fs_meta = _extract_query_function_score_meta(request_body)
+
     if not query_expl:
         return ExplainQueryDetailRes(
             original_score=fallback_score,
             filters=build_filter_matches(request_body, source),
             bm25_groups=[],
-            function_scores=[]
+            function_scores=[],
+            function_score_mode=query_fs_meta.get("score_mode"),
+            function_boost_mode=query_fs_meta.get("boost_mode"),
+            function_score_combined=None,
+            final_query_score=fallback_score,
         )
 
     term_factors = _extract_term_factors(query_expl)
+    function_scores = build_query_function_scores(
+        query_expl=query_expl,
+        request_body=request_body,
+        source=source
+    )
+
+    function_score_combined = _find_query_function_combined_score(query_expl)
+    final_query_score = query_expl.get("value") if query_expl.get("value") is not None else fallback_score
 
     return ExplainQueryDetailRes(
-        original_score=query_expl.get("value") if query_expl.get("value") is not None else fallback_score,
+        original_score=_find_original_text_query_score(query_expl) or final_query_score,
         filters=build_filter_matches(request_body, source),
         bm25_groups=build_field_score_groups(term_factors, source),
-        function_scores=build_query_function_scores(query_expl, source)
+        function_scores=function_scores,
+        function_score_mode=query_fs_meta.get("score_mode"),
+        function_boost_mode=query_fs_meta.get("boost_mode"),
+        function_score_combined=function_score_combined,
+        final_query_score=final_query_score,
     )
 
 
@@ -475,6 +494,35 @@ def build_filter_matches(request_body: Dict[str, Any], source: Dict[str, Any]) -
             ))
 
     return results
+
+def _find_original_text_query_score(query_expl: Dict[str, Any]) -> Optional[float]:
+    """
+    query_expl 안에서 function score 적용 전 text score(BM25 aggregate)를 찾는다.
+    보통 'sum of:' / 'max of:' / weight(...) 묶음 중 query relevance 부분.
+    """
+    if not query_expl:
+        return None
+
+    # "function score, product of:" 아래 첫 detail이 텍스트 점수인 경우가 많음
+    function_score_node = _find_first_node_contains(query_expl, "function score, product of:")
+    if function_score_node:
+        details = function_score_node.get("details", []) or []
+        if details:
+            first = details[0]
+            if isinstance(first.get("value"), (int, float)):
+                return first.get("value")
+
+    return None
+
+def _extract_query_function_score_meta(request_body: Dict[str, Any]) -> Dict[str, Any]:
+    query = request_body.get("query", {}) or {}
+    fs = query.get("function_score", {}) or {}
+
+    return {
+        "score_mode": fs.get("score_mode"),
+        "boost_mode": fs.get("boost_mode"),
+        "functions": fs.get("functions", []) or [],
+    }
 
 
 def _extract_bool_query_from_request(request_body: Dict[str, Any]) -> Dict[str, Any]:
@@ -529,48 +577,87 @@ def build_field_score_groups(
 
 def build_query_function_scores(
     query_expl: Dict[str, Any],
+    request_body: Dict[str, Any],
     source: Dict[str, Any]
 ) -> List[ExplainFunctionScoreRes]:
     results: List[ExplainFunctionScoreRes] = []
 
-    if not query_expl:
-        return results
+    query = request_body.get("query", {}) or {}
+    fs = query.get("function_score", {}) or {}
+    functions = fs.get("functions", []) or []
 
-    function_score_nodes = _find_all_nodes_contains(query_expl, "function score")
-    for node in function_score_nodes:
-        desc = node.get("description", "") or ""
-        results.append(ExplainFunctionScoreRes(
-            label="Function Score",
-            score=node.get("value"),
-            description=desc
-        ))
+    for idx, fn in enumerate(functions, start=1):
+        filter_label = _describe_filter(fn.get("filter"))
+        matched_node = _find_matching_function_node(query_expl, filter_label)
 
-    weight_nodes = _find_all_nodes_by_exact_description(query_expl, "weight")
-    for node in weight_nodes:
-        results.append(ExplainFunctionScoreRes(
-            label="Weight",
-            score=node.get("value"),
-            description="weight function"
-        ))
+        # weight function
+        if "weight" in fn:
+            results.append(
+                ExplainFunctionScoreRes(
+                    label=f"Function {idx} - Weight",
+                    score=matched_node.get("value") if matched_node else fn.get("weight"),
+                    description=matched_node.get("description") if matched_node else "weight function",
+                    operation=fs.get("score_mode"),
+                    filter_label=filter_label,
+                    matched=matched_node is not None,
+                    params={"weight": fn.get("weight")}
+                )
+            )
+            continue
 
-    match_filter_nodes = _find_all_nodes_contains(query_expl, "match filter:")
-    for node in match_filter_nodes:
-        results.append(ExplainFunctionScoreRes(
-            label="Matched Function Filter",
-            score=node.get("value"),
-            description=node.get("description")
-        ))
+        # field_value_factor (query level에도 혹시 있을 수 있으니 처리)
+        if "field_value_factor" in fn:
+            fvf = fn["field_value_factor"]
+            field_name = fvf.get("field")
+            results.append(
+                ExplainFunctionScoreRes(
+                    label=f"Function {idx} - Field Value Factor",
+                    score=matched_node.get("value") if matched_node else None,
+                    field=field_name,
+                    source_value=source.get(field_name),
+                    description=matched_node.get("description") if matched_node else "field_value_factor",
+                    operation=fs.get("score_mode"),
+                    filter_label=filter_label,
+                    matched=matched_node is not None,
+                    params=fvf
+                )
+            )
+            continue
+
+        # decay function
+        for decay_key in ("gauss", "exp", "linear"):
+            if decay_key in fn:
+                decay_body = fn[decay_key]
+                field_name = next(iter(decay_body.keys()))
+                results.append(
+                    ExplainFunctionScoreRes(
+                        label=f"Function {idx} - {decay_key.title()} Decay",
+                        score=matched_node.get("value") if matched_node else None,
+                        field=field_name,
+                        source_value=source.get(field_name),
+                        description=matched_node.get("description") if matched_node else f"{decay_key} decay",
+                        operation=fs.get("score_mode"),
+                        filter_label=filter_label,
+                        matched=matched_node is not None,
+                        params=decay_body
+                    )
+                )
+                break
 
     return results
 
 
 def build_rescore_details(
     rescore_nodes: List[Dict[str, Any]],
+    request_body: Dict[str, Any],
     source: Dict[str, Any]
 ) -> List[ExplainRescoreDetailRes]:
     results: List[ExplainRescoreDetailRes] = []
+    request_rescores = request_body.get("rescore", []) or []
 
     for idx, node in enumerate(rescore_nodes, start=1):
+        req_rescore = request_rescores[idx - 1] if idx - 1 < len(request_rescores) else {}
+
         custom_node = _find_first_node_by_prefix(node, _SCORE_NORMALIZER_PREFIX)
         if custom_node is not None:
             results.append(
@@ -601,43 +688,81 @@ def build_rescore_details(
             )
             continue
 
-        field_value_nodes = _find_all_nodes_contains(node, "field value function:")
-        if field_value_nodes:
-            detail_items: List[ExplainFunctionScoreRes] = []
-            for fv_node in field_value_nodes:
-                desc = fv_node.get("description", "") or ""
-                field_name = _extract_field_name_from_field_value_function(desc)
+        query_rescore = req_rescore.get("query", {}) or {}
+        rescore_query = query_rescore.get("rescore_query", {}) or {}
+        fs = rescore_query.get("function_score", {}) or {}
+        functions = fs.get("functions", []) or []
 
+        detail_items: List[ExplainFunctionScoreRes] = []
+
+        for f_idx, fn in enumerate(functions, start=1):
+            filter_label = _describe_filter(fn.get("filter"))
+            matched = _rescore_function_matched(node, filter_label, fn)
+
+            if "field_value_factor" in fn:
+                fvf = fn["field_value_factor"]
+                field_name = fvf.get("field")
+                matched_node = _find_first_node_contains(node, "field value function:")
                 detail_items.append(
                     ExplainFunctionScoreRes(
-                        label="Field Value Factor",
-                        score=fv_node.get("value"),
+                        label=f"Function {f_idx} - Field Value Factor",
+                        score=matched_node.get("value") if matched_node else None,
                         field=field_name,
-                        source_value=source.get(field_name) if field_name else None,
-                        description=desc
+                        source_value=source.get(field_name),
+                        description=matched_node.get("description") if matched_node else "field_value_factor",
+                        operation=fs.get("score_mode"),
+                        filter_label=filter_label,
+                        matched=matched,
+                        params=fvf
                     )
                 )
+                continue
 
-            results.append(
-                ExplainRescoreDetailRes(
-                    order=idx,
-                    type="query_rescore_function_score",
-                    title=f"Rescore {idx} - Function Score",
-                    score=node.get("value"),
-                    description="rescore query의 function_score 결과",
-                    details=detail_items
+            if "weight" in fn and any(k in fn for k in ("filter",)):
+                detail_items.append(
+                    ExplainFunctionScoreRes(
+                        label=f"Function {f_idx} - Weight",
+                        score=fn.get("weight"),
+                        description="weight function",
+                        operation=fs.get("score_mode"),
+                        filter_label=filter_label,
+                        matched=matched,
+                        params={"weight": fn.get("weight")}
+                    )
                 )
-            )
-            continue
+                continue
+
+            for decay_key in ("gauss", "exp", "linear"):
+                if decay_key in fn:
+                    decay_body = fn[decay_key]
+                    field_name = next(iter(decay_body.keys()))
+                    detail_items.append(
+                        ExplainFunctionScoreRes(
+                            label=f"Function {f_idx} - {decay_key.title()} Decay",
+                            score=None,
+                            field=field_name,
+                            source_value=source.get(field_name),
+                            description=f"{decay_key} decay",
+                            operation=fs.get("score_mode"),
+                            filter_label=filter_label,
+                            matched=matched,
+                            params=decay_body
+                        )
+                    )
+                    break
 
         results.append(
             ExplainRescoreDetailRes(
                 order=idx,
-                type="unknown",
-                title=f"Rescore {idx}",
+                type="query_rescore_function_score",
+                title=f"Rescore {idx} - Function Score",
                 score=node.get("value"),
-                description=node.get("description"),
-                details=[]
+                description="rescore query의 function_score 결과",
+                details=detail_items,
+                score_mode=fs.get("score_mode"),
+                boost_mode=fs.get("boost_mode"),
+                query_weight=query_rescore.get("query_weight"),
+                rescore_query_weight=query_rescore.get("rescore_query_weight"),
             )
         )
 
@@ -926,7 +1051,72 @@ def _find_all_nodes_contains(node: Dict[str, Any], text: str) -> List[Dict[str, 
         results.extend(_find_all_nodes_contains(child, text))
     return results
 
+def _find_matching_function_node(query_expl: Dict[str, Any], filter_label: Optional[str]) -> Optional[Dict[str, Any]]:
+    if not query_expl:
+        return None
 
-def _extract_field_name_from_field_value_function(desc: str) -> Optional[str]:
-    m = re.search(r"doc\['([^']+)'\]", desc)
-    return m.group(1) if m else None
+    # match filter: DISP_GRP_CD:1106030200
+    if filter_label:
+        candidates = _find_all_nodes_contains(query_expl, filter_label)
+        if candidates:
+            return candidates[0]
+
+    # generic fallback
+    node = _find_first_node_contains(query_expl, "match filter:")
+    if node is not None:
+        return node
+
+    return None
+
+def _describe_filter(filter_obj: Optional[Dict[str, Any]]) -> Optional[str]:
+    if not filter_obj:
+        return None
+
+    if "term" in filter_obj:
+        field, value_obj = next(iter(filter_obj["term"].items()))
+        value = value_obj.get("value") if isinstance(value_obj, dict) else value_obj
+        return f"{field}:{value}"
+
+    if "match" in filter_obj:
+        field, value_obj = next(iter(filter_obj["match"].items()))
+        if isinstance(value_obj, dict):
+            return f"{field}:{value_obj.get('query')}"
+        return f"{field}:{value_obj}"
+
+    if "exists" in filter_obj:
+        return f"exists:{filter_obj['exists'].get('field')}"
+
+    if "span_near" in filter_obj:
+        return "span_near"
+
+    return str(filter_obj)
+
+def _find_query_function_combined_score(query_expl: Dict[str, Any]) -> Optional[float]:
+    """
+    query_expl 안에서 function score의 합산 결과를 찾는다.
+    예: function score, score mode [sum]
+    """
+    node = _find_first_node_contains(query_expl, "function score, score mode [")
+    if node is not None:
+        return node.get("value")
+    return None
+
+def _rescore_function_matched(node: Dict[str, Any], filter_label: Optional[str], fn: Dict[str, Any]) -> bool:
+    if "field_value_factor" in fn:
+        return _find_first_node_contains(node, "field value function:") is not None
+
+    if filter_label:
+        if "match filter:" in filter_label:
+            return _find_first_node_contains(node, filter_label) is not None
+
+        if _find_first_node_contains(node, filter_label) is not None:
+            return True
+
+    if "filter" in fn and "span_near" in fn["filter"]:
+        return _find_first_node_contains(node, "span_near") is not None
+
+    if "filter" in fn and "exists" in fn["filter"]:
+        field_name = fn["filter"]["exists"].get("field")
+        return _find_first_node_contains(node, field_name or "") is not None
+
+    return False
