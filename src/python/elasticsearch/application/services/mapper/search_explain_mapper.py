@@ -4,15 +4,17 @@ import re
 from typing import Any, Dict, List, Optional
 
 from src.python.elasticsearch.application.schemas.responses.search.search_explain_res import (
+    ExplainSummaryHitRes,
     ExplainScoreStepRes,
-    ExplainSummaryHitRes, QueryExplainScoreTimelineStepRes, QueryExplainFieldImpactRes, QueryExplainFilterMatchRes,
-    QueryExplainScoringFunctionRes, QueryExplainMatchedTokenRes,
-)
-from src.python.elasticsearch.application.schemas.responses.search.search_explain_res import (
-    ExplainDetailNodeRes,
-    ExplainSectionRes,
-    ExplainTermFactorRes,
     SearchExplainDetailRes,
+    ExplainQueryDetailRes,
+    ExplainFieldScoreGroupRes,
+    ExplainMatchedTokenRes,
+    ExplainFilterRes,
+    ExplainFunctionScoreRes,
+    ExplainRescoreDetailRes,
+    ExplainTermFactorRes,
+    QueryExplainScoreTimelineStepRes,
 )
 
 _SCORE_NORMALIZER_PREFIX = "score_normalizer_rescore"
@@ -95,150 +97,6 @@ def build_doc_title(
     return " | ".join(dedup_parts)
 
 
-def build_score_timeline(expl: Dict[str, Any], total_score: Optional[float]) -> List[QueryExplainScoreTimelineStepRes]:
-    steps: List[QueryExplainScoreTimelineStepRes] = []
-
-    original_query_score = _find_original_query_score(expl)
-    if original_query_score is None and expl.get("value") is not None and _is_query_root(expl.get("description", "")):
-        original_query_score = expl.get("value")
-
-    if original_query_score is not None:
-        steps.append(QueryExplainScoreTimelineStepRes(
-            key="query",
-            label="Original Query Score",
-            value=original_query_score,
-            description="검색어 매칭으로 계산된 원본 점수"
-        ))
-
-    # custom score normalizer
-    custom_nodes = _find_all_nodes_by_prefix(expl, _SCORE_NORMALIZER_PREFIX)
-    for idx, node in enumerate(custom_nodes, start=1):
-        steps.append(QueryExplainScoreTimelineStepRes(
-            key=f"rescore_normalizer_{idx}",
-            label=f"Rescore {idx} - Score Normalizer",
-            value=_find_factor_applied_score(node) or node.get("value"),
-            description=_find_normalizer_type(node) or "score_normalizer"
-        ))
-
-    # function score / field value factor
-    function_nodes = _find_all_nodes_contains(expl, "function score")
-    for idx, node in enumerate(function_nodes, start=1):
-        steps.append(QueryExplainScoreTimelineStepRes(
-            key=f"function_score_{idx}",
-            label=f"Function Score {idx}",
-            value=node.get("value"),
-            description=node.get("description")
-        ))
-
-    if total_score is not None:
-        steps.append(QueryExplainScoreTimelineStepRes(
-            key="total",
-            label="Total Score",
-            value=total_score,
-            description="최종 점수"
-        ))
-
-    return steps
-
-
-def build_field_impacts(
-    expl: Dict[str, Any],
-    source: Dict[str, Any]
-) -> List[QueryExplainFieldImpactRes]:
-    term_factors = _extract_term_factors(expl)
-    grouped: Dict[str, QueryExplainFieldImpactRes] = {}
-
-    for factor in term_factors:
-        field_name = factor.field or "unknown"
-
-        if field_name not in grouped:
-            grouped[field_name] = QueryExplainFieldImpactRes(
-                field=field_name,
-                source_value=source.get(field_name),
-                total_score=0.0,
-                matched_tokens=[]
-            )
-
-        grouped[field_name].matched_tokens.append(
-            QueryExplainMatchedTokenRes(
-                token=factor.term or "unknown",
-                score=factor.score,
-                boost=factor.boost,
-                idf=factor.idf,
-                tf=factor.tf
-            )
-        )
-
-        grouped[field_name].total_score = (grouped[field_name].total_score or 0.0) + (factor.score or 0.0)
-
-    return sorted(grouped.values(), key=lambda x: x.total_score or 0.0, reverse=True)
-
-
-def build_filter_matches(request_body: Dict[str, Any], source: Dict[str, Any]) -> List[QueryExplainFilterMatchRes]:
-    results: List[QueryExplainFilterMatchRes] = []
-
-    query = request_body.get("query", {})
-    bool_query = query.get("bool", {})
-    filters = bool_query.get("filter", [])
-
-    for f in filters:
-        if "term" in f:
-            field, value_obj = next(iter(f["term"].items()))
-            value = value_obj.get("value") if isinstance(value_obj, dict) else value_obj
-            results.append(QueryExplainFilterMatchRes(
-                label=f"{field} = {value}",
-                matched=True,
-                description=f"source value: {source.get(field)}"
-            ))
-
-        elif "range" in f:
-            field, range_obj = next(iter(f["range"].items()))
-            results.append(QueryExplainFilterMatchRes(
-                label=f"{field} range",
-                matched=True,
-                description=str(range_obj)
-            ))
-
-        else:
-            results.append(QueryExplainFilterMatchRes(
-                label="filter condition",
-                matched=True,
-                description=str(f)
-            ))
-
-    return results
-
-
-def build_scoring_functions(
-    expl: Dict[str, Any],
-    source: Dict[str, Any]
-) -> List[QueryExplainScoringFunctionRes]:
-    results: List[QueryExplainScoringFunctionRes] = []
-
-    field_value_nodes = _find_all_nodes_contains(expl, "field value function:")
-    for node in field_value_nodes:
-        desc = node.get("description", "") or ""
-        field_name = _extract_field_name_from_field_value_function(desc)
-
-        results.append(QueryExplainScoringFunctionRes(
-            label="Field Value Function",
-            score=node.get("value"),
-            description=desc,
-            field=field_name,
-            source_value=source.get(field_name) if field_name else None
-        ))
-
-    function_score_nodes = _find_all_nodes_contains(expl, "function score")
-    for node in function_score_nodes:
-        results.append(QueryExplainScoringFunctionRes(
-            label="Function Score",
-            score=node.get("value"),
-            description=node.get("description")
-        ))
-
-    return results
-
-
 def build_detail(
     hit: Dict[str, Any],
     request_body: Dict[str, Any],
@@ -255,34 +113,31 @@ def build_detail(
         hit.get("_id", "")
     )
 
-    detail_parsed = _parse_detail_from_explanation(
-        explanation,
-        final_score=hit.get("_score")
+    query_expl = _extract_query_explanation_tree(explanation)
+    rescore_nodes = _extract_rescore_nodes(explanation)
+
+    query_detail = build_query_detail(
+        query_expl=query_expl,
+        request_body=request_body,
+        source=source,
+        fallback_score=_find_original_query_score(explanation)
     )
 
-    query_section = detail_parsed["query_section"]
-    rescore_sections = detail_parsed["rescore_sections"]
+    rescores = build_rescore_details(
+        rescore_nodes=rescore_nodes,
+        source=source
+    )
 
-    query_explanation = _extract_query_explanation_tree(explanation)
-
-    term_factors = _extract_term_factors(query_explanation) if query_explanation else []
     score_timeline = build_score_timeline(explanation, hit.get("_score"))
-    field_impacts = build_field_impacts(query_explanation, source) if query_explanation else []
-    filter_matches = build_filter_matches(request_body, source)
-    scoring_functions = build_scoring_functions(query_explanation, source) if query_explanation else []
 
     return SearchExplainDetailRes(
         index=hit.get("_index", ""),
         id=hit.get("_id", ""),
         doc_title=doc_title,
         total_score=hit.get("_score"),
-        query_section=query_section,
-        rescore_sections=rescore_sections,
-        term_factors=term_factors,
+        query=query_detail,
+        rescores=rescores,
         score_timeline=score_timeline,
-        field_impacts=field_impacts,
-        filter_matches=filter_matches,
-        scoring_functions=scoring_functions,
         raw_explanation=explanation if include_raw_explain else None,
         source=source if include_source_fields else None
     )
@@ -296,12 +151,6 @@ def _parse_summary_from_explanation(
     expl: Dict[str, Any],
     final_score: Optional[float] = None
 ) -> Dict[str, Any]:
-    """
-    explain tree를 보고 summary용
-    - query_score
-    - rescore_steps
-    를 안정적으로 추출한다.
-    """
     if not expl:
         return {
             "query_score": final_score,
@@ -310,22 +159,18 @@ def _parse_summary_from_explanation(
 
     desc = expl.get("description", "") or ""
 
-    # Case 1) query only
     if _is_query_root(desc):
         return {
             "query_score": expl.get("value"),
             "rescore_steps": []
         }
 
-    # Case 2) single custom rescore root
     if desc.startswith(_SCORE_NORMALIZER_PREFIX):
         return _parse_single_custom_rescore_summary(expl)
 
-    # Case 3) multi-step rescore root (e.g. "sum of:")
     if desc.startswith("sum of:"):
         return _parse_sum_root_summary(expl, final_score)
 
-    # fallback
     query_score = _find_original_query_score(expl)
     if query_score is not None:
         return {
@@ -378,13 +223,6 @@ def _parse_sum_root_summary(
     expl: Dict[str, Any],
     final_score: Optional[float] = None
 ) -> Dict[str, Any]:
-    """
-    root = "sum of:" 인 경우
-    detail마다 rescore step일 가능성이 높다.
-    예:
-    - custom score_normalizer (product of -> score_normalizer_rescore ...)
-    - query rescore/function_score (product of -> function score ...)
-    """
     details = expl.get("details", []) or []
 
     query_score = _find_original_query_score(expl)
@@ -395,7 +233,6 @@ def _parse_sum_root_summary(
         if step is not None:
             rescore_steps.append(step)
 
-    # query_score를 못 찾았으면 fallback으로 root 내부에서 찾기
     if query_score is None:
         query_score = _find_original_query_score(expl)
 
@@ -406,17 +243,12 @@ def _parse_sum_root_summary(
 
 
 def _parse_rescore_step_node(node: Dict[str, Any], idx: int) -> Optional[ExplainScoreStepRes]:
-    """
-    sum of: 하위 각 node를 보고 rescore step 1개로 요약한다.
-    """
     custom_node = _find_first_node_by_prefix(node, _SCORE_NORMALIZER_PREFIX)
     if custom_node is not None:
         normalizer_type = _find_normalizer_type(custom_node)
         factor_applied_score = _find_factor_applied_score(custom_node)
         normalized_score = _find_normalized_score(custom_node)
-        factor_mode = _find_factor_mode(custom_node)
 
-        # summary에서는 실제 step 결과값이 더 중요하므로 factor_applied_score 우선
         step_value = factor_applied_score if factor_applied_score is not None else normalized_score
 
         return ExplainScoreStepRes(
@@ -424,15 +256,6 @@ def _parse_rescore_step_node(node: Dict[str, Any], idx: int) -> Optional[Explain
             label=f"score_normalizer:{normalizer_type or 'unknown'}",
             value=step_value,
             formula_label=f"rescore{idx}:{normalizer_type or 'score_normalizer'}"
-        )
-
-    function_score_node = _find_first_node_contains(node, "function score")
-    if function_score_node is not None:
-        return ExplainScoreStepRes(
-            key=f"rescore_{idx}_function_score",
-            label="query_rescore:function_score",
-            value=node.get("value"),
-            formula_label=f"rescore{idx}:function_score"
         )
 
     field_value_node = _find_first_node_contains(node, "field value function:")
@@ -444,7 +267,15 @@ def _parse_rescore_step_node(node: Dict[str, Any], idx: int) -> Optional[Explain
             formula_label=f"rescore{idx}:field_value_factor"
         )
 
-    # generic fallback
+    function_score_node = _find_first_node_contains(node, "function score")
+    if function_score_node is not None:
+        return ExplainScoreStepRes(
+            key=f"rescore_{idx}_function_score",
+            label="query_rescore:function_score",
+            value=node.get("value"),
+            formula_label=f"rescore{idx}:function_score"
+        )
+
     desc = node.get("description", "") or ""
     val = node.get("value")
     if val is not None and desc:
@@ -463,23 +294,9 @@ def _build_summary_formula(
     rescore_steps: List[ExplainScoreStepRes],
     total_score: Optional[float]
 ) -> str:
-    """
-    formula를 실제 점수 변화 흐름 기준으로 표현한다.
-
-    예)
-    - query only
-      query(8.5613) = total(8.5613)
-
-    - single rescore
-      query(8.5613) -> rescore1:min_max(1.0000) = total(1.0000)
-
-    - multi rescore
-      query(7.8666) -> rescore1:min_max(0.6122), 0.6122 + rescore2:function_score(64.0000) = total(64.6122)
-    """
     if query_score is None and not rescore_steps:
         return f"total({float(total_score):.4f})" if total_score is not None else "total(null)"
 
-    # query only
     if query_score is not None and not rescore_steps:
         if total_score is not None:
             return f"query({query_score:.4f}) = total({float(total_score):.4f})"
@@ -506,10 +323,9 @@ def _build_summary_formula(
             current_value = current_value + step.value
 
         if total_score is not None:
-            return ", ".join(expr_parts) + f" = total({float(total_score):.4f})"
-        return ", ".join(expr_parts)
+            return " | ".join(expr_parts) + f" = total({float(total_score):.4f})"
+        return " | ".join(expr_parts)
 
-    # query + rescore
     first_step = valid_steps[0] if valid_steps else None
 
     if first_step is None:
@@ -537,230 +353,362 @@ def _build_summary_formula(
 # Detail parsing
 # =========================================================
 
-def _parse_detail_from_explanation(
-    expl: Dict[str, Any],
-    final_score: Optional[float] = None
-) -> Dict[str, Any]:
+def build_score_timeline(expl: Dict[str, Any], total_score: Optional[float]) -> List[QueryExplainScoreTimelineStepRes]:
+    steps: List[QueryExplainScoreTimelineStepRes] = []
+
+    original_query_score = _find_original_query_score(expl)
+    if original_query_score is None and expl.get("value") is not None and _is_query_root(expl.get("description", "")):
+        original_query_score = expl.get("value")
+
+    if original_query_score is not None:
+        steps.append(QueryExplainScoreTimelineStepRes(
+            key="query",
+            label="Original Query Score",
+            value=original_query_score,
+            description="검색어 매칭으로 계산된 원본 점수"
+        ))
+
+    rescore_nodes = _extract_rescore_nodes(expl)
+
+    for idx, node in enumerate(rescore_nodes, start=1):
+        custom_node = _find_first_node_by_prefix(node, _SCORE_NORMALIZER_PREFIX)
+        if custom_node is not None:
+            steps.append(QueryExplainScoreTimelineStepRes(
+                key=f"rescore_{idx}_normalizer",
+                label=f"Rescore {idx}",
+                value=_find_factor_applied_score(custom_node) or node.get("value"),
+                description=f"score_normalizer:{_find_normalizer_type(custom_node) or 'unknown'}"
+            ))
+            continue
+
+        field_value_nodes = _find_all_nodes_contains(node, "field value function:")
+        if field_value_nodes:
+            steps.append(QueryExplainScoreTimelineStepRes(
+                key=f"rescore_{idx}_function_score",
+                label=f"Rescore {idx}",
+                value=node.get("value"),
+                description="function_score / field_value_factor"
+            ))
+            continue
+
+        steps.append(QueryExplainScoreTimelineStepRes(
+            key=f"rescore_{idx}",
+            label=f"Rescore {idx}",
+            value=node.get("value"),
+            description=node.get("description")
+        ))
+
+    if total_score is not None:
+        steps.append(QueryExplainScoreTimelineStepRes(
+            key="total",
+            label="Total Score",
+            value=total_score,
+            description="최종 점수"
+        ))
+
+    return steps
+
+
+def build_query_detail(
+    query_expl: Optional[Dict[str, Any]],
+    request_body: Dict[str, Any],
+    source: Dict[str, Any],
+    fallback_score: Optional[float] = None
+) -> ExplainQueryDetailRes:
+    if not query_expl:
+        return ExplainQueryDetailRes(
+            original_score=fallback_score,
+            filters=build_filter_matches(request_body, source),
+            bm25_groups=[],
+            function_scores=[]
+        )
+
+    term_factors = _extract_term_factors(query_expl)
+
+    return ExplainQueryDetailRes(
+        original_score=query_expl.get("value") if query_expl.get("value") is not None else fallback_score,
+        filters=build_filter_matches(request_body, source),
+        bm25_groups=build_field_score_groups(term_factors, source),
+        function_scores=build_query_function_scores(query_expl, source)
+    )
+
+
+def build_filter_matches(request_body: Dict[str, Any], source: Dict[str, Any]) -> List[ExplainFilterRes]:
+    results: List[ExplainFilterRes] = []
+
+    bool_query = _extract_bool_query_from_request(request_body)
+    filters = bool_query.get("filter", []) if bool_query else []
+
+    for f in filters:
+        if "term" in f:
+            field, value_obj = next(iter(f["term"].items()))
+            value = value_obj.get("value") if isinstance(value_obj, dict) else value_obj
+
+            results.append(ExplainFilterRes(
+                label=f"{field} = {value}",
+                matched=True,
+                source_value=source.get(field),
+                description="term filter"
+            ))
+
+        elif "range" in f:
+            field, range_obj = next(iter(f["range"].items()))
+            results.append(ExplainFilterRes(
+                label=f"{field} range",
+                matched=True,
+                source_value=source.get(field),
+                description=str(range_obj)
+            ))
+
+        elif "bool" in f:
+            results.append(ExplainFilterRes(
+                label="nested bool filter",
+                matched=True,
+                description=str(f["bool"])
+            ))
+
+        else:
+            results.append(ExplainFilterRes(
+                label="filter condition",
+                matched=True,
+                description=str(f)
+            ))
+
+    return results
+
+
+def _extract_bool_query_from_request(request_body: Dict[str, Any]) -> Dict[str, Any]:
+    query = request_body.get("query", {}) or {}
+
+    if "bool" in query:
+        return query["bool"]
+
+    if "function_score" in query:
+        fs_query = query["function_score"].get("query", {}) or {}
+        if "bool" in fs_query:
+            return fs_query["bool"]
+
+    return {}
+
+
+def build_field_score_groups(
+    term_factors: List[ExplainTermFactorRes],
+    source: Dict[str, Any]
+) -> List[ExplainFieldScoreGroupRes]:
+    grouped: Dict[str, ExplainFieldScoreGroupRes] = {}
+
+    for factor in term_factors:
+        field_name = factor.field or "unknown"
+
+        if field_name not in grouped:
+            grouped[field_name] = ExplainFieldScoreGroupRes(
+                field=field_name,
+                source_value=source.get(field_name),
+                total_score=0.0,
+                matched_tokens=[]
+            )
+
+        grouped[field_name].matched_tokens.append(
+            ExplainMatchedTokenRes(
+                token=factor.term or "unknown",
+                score=factor.score,
+                boost=factor.boost,
+                idf=factor.idf,
+                tf=factor.tf,
+                description=f"freq={factor.freq}, dl={factor.dl}, avgdl={factor.avgdl}"
+            )
+        )
+
+        grouped[field_name].total_score = (grouped[field_name].total_score or 0.0) + (factor.score or 0.0)
+
+    for item in grouped.values():
+        item.matched_tokens.sort(key=lambda x: x.score or 0.0, reverse=True)
+
+    return sorted(grouped.values(), key=lambda x: x.total_score or 0.0, reverse=True)
+
+
+def build_query_function_scores(
+    query_expl: Dict[str, Any],
+    source: Dict[str, Any]
+) -> List[ExplainFunctionScoreRes]:
+    results: List[ExplainFunctionScoreRes] = []
+
+    if not query_expl:
+        return results
+
+    function_score_nodes = _find_all_nodes_contains(query_expl, "function score")
+    for node in function_score_nodes:
+        desc = node.get("description", "") or ""
+        results.append(ExplainFunctionScoreRes(
+            label="Function Score",
+            score=node.get("value"),
+            description=desc
+        ))
+
+    weight_nodes = _find_all_nodes_by_exact_description(query_expl, "weight")
+    for node in weight_nodes:
+        results.append(ExplainFunctionScoreRes(
+            label="Weight",
+            score=node.get("value"),
+            description="weight function"
+        ))
+
+    match_filter_nodes = _find_all_nodes_contains(query_expl, "match filter:")
+    for node in match_filter_nodes:
+        results.append(ExplainFunctionScoreRes(
+            label="Matched Function Filter",
+            score=node.get("value"),
+            description=node.get("description")
+        ))
+
+    return results
+
+
+def build_rescore_details(
+    rescore_nodes: List[Dict[str, Any]],
+    source: Dict[str, Any]
+) -> List[ExplainRescoreDetailRes]:
+    results: List[ExplainRescoreDetailRes] = []
+
+    for idx, node in enumerate(rescore_nodes, start=1):
+        custom_node = _find_first_node_by_prefix(node, _SCORE_NORMALIZER_PREFIX)
+        if custom_node is not None:
+            results.append(
+                ExplainRescoreDetailRes(
+                    order=idx,
+                    type="score_normalizer",
+                    title=f"Rescore {idx} - Score Normalizer",
+                    score=_find_factor_applied_score(custom_node) or custom_node.get("value"),
+                    description=f"normalizer={_find_normalizer_type(custom_node)}, factor_mode={_find_factor_mode(custom_node)}",
+                    details=[
+                        ExplainFunctionScoreRes(
+                            label="Original Query Score",
+                            score=_find_original_query_score(custom_node),
+                            description="normalization 대상 원본 점수"
+                        ),
+                        ExplainFunctionScoreRes(
+                            label="Normalized Score",
+                            score=_find_normalized_score(custom_node),
+                            description="정규화 후 점수"
+                        ),
+                        ExplainFunctionScoreRes(
+                            label="After Factor",
+                            score=_find_factor_applied_score(custom_node),
+                            description="factor 적용 후 점수"
+                        )
+                    ]
+                )
+            )
+            continue
+
+        field_value_nodes = _find_all_nodes_contains(node, "field value function:")
+        if field_value_nodes:
+            detail_items: List[ExplainFunctionScoreRes] = []
+            for fv_node in field_value_nodes:
+                desc = fv_node.get("description", "") or ""
+                field_name = _extract_field_name_from_field_value_function(desc)
+
+                detail_items.append(
+                    ExplainFunctionScoreRes(
+                        label="Field Value Factor",
+                        score=fv_node.get("value"),
+                        field=field_name,
+                        source_value=source.get(field_name) if field_name else None,
+                        description=desc
+                    )
+                )
+
+            results.append(
+                ExplainRescoreDetailRes(
+                    order=idx,
+                    type="query_rescore_function_score",
+                    title=f"Rescore {idx} - Function Score",
+                    score=node.get("value"),
+                    description="rescore query의 function_score 결과",
+                    details=detail_items
+                )
+            )
+            continue
+
+        results.append(
+            ExplainRescoreDetailRes(
+                order=idx,
+                type="unknown",
+                title=f"Rescore {idx}",
+                score=node.get("value"),
+                description=node.get("description"),
+                details=[]
+            )
+        )
+
+    return results
+
+
+# =========================================================
+# Explain tree extractors
+# =========================================================
+
+def _extract_query_explanation_tree(expl: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     if not expl:
-        return {
-            "query_section": ExplainSectionRes(title="Query Score", score=final_score, items=[]),
-            "rescore_sections": [],
-            "term_factors": []
-        }
+        return None
 
     desc = expl.get("description", "") or ""
 
-    # query only
     if _is_query_root(desc):
-        return {
-            "query_section": ExplainSectionRes(
-                title="Query Score",
-                score=expl.get("value"),
-                items=[_to_detail_node(expl)]
-            ),
-            "rescore_sections": [],
-            "term_factors": _extract_term_factors(expl)
-        }
+        return expl
 
-    # single custom rescore root
+    original_query_node = _find_first_node_by_exact_description(expl, "original query score")
+    if original_query_node:
+        details = original_query_node.get("details", []) or []
+        if details:
+            return details[0]
+        return original_query_node
+
+    return None
+
+
+def _extract_rescore_nodes(expl: Dict[str, Any]) -> List[Dict[str, Any]]:
+    if not expl:
+        return []
+
+    desc = expl.get("description", "") or ""
+
+    if desc.startswith("sum of:"):
+        details = expl.get("details", []) or []
+        return [d for d in details if _is_rescore_candidate(d)]
+
     if desc.startswith(_SCORE_NORMALIZER_PREFIX):
-        query_section, rescore_sections = _build_custom_rescore_detail(expl)
-        return {
-            "query_section": query_section,
-            "rescore_sections": rescore_sections,
-            "term_factors": _extract_term_factors(expl)
-        }
+        return [expl]
 
-    # multi rescore root
-    if desc.startswith("sum of:"):
-        return _build_sum_root_detail(expl, final_score)
-
-    # fallback
-    return {
-        "query_section": ExplainSectionRes(
-            title="Query Score",
-            score=expl.get("value"),
-            items=[_to_detail_node(expl)]
-        ),
-        "rescore_sections": [],
-        "term_factors": _extract_term_factors(expl)
-    }
+    return []
 
 
-def _build_sum_root_detail(
-    explanation: Dict[str, Any],
-    final_score: Optional[float] = None
-) -> Dict[str, Any]:
-    details = explanation.get("details", []) or []
+def _is_rescore_candidate(node: Dict[str, Any]) -> bool:
+    if _find_first_node_by_prefix(node, _SCORE_NORMALIZER_PREFIX) is not None:
+        return True
 
-    query_items: List[ExplainDetailNodeRes] = []
-    query_score = _find_original_query_score(explanation)
-    rescore_sections: List[ExplainSectionRes] = []
+    if _find_first_node_contains(node, "field value function:") is not None:
+        return True
 
-    # query 원점수는 custom normalizer 내부 original query score에서 꺼내고
-    # rescore sections는 sum의 각 child마다 하나씩 만든다.
-    original_query_node = _find_first_node_by_exact_description(explanation, "original query score")
-    if original_query_node is not None:
-        query_items.append(_to_detail_node(original_query_node))
+    if _find_first_node_contains(node, "secondaryWeight") is not None:
+        return True
 
-    for idx, d in enumerate(details, start=1):
-        section = _build_rescore_section_from_sum_child(d, idx)
-        if section is not None:
-            rescore_sections.append(section)
+    if _find_first_node_contains(node, "primaryWeight") is not None:
+        return True
 
-    return {
-        "query_section": ExplainSectionRes(
-            title="Query Score",
-            score=query_score if query_score is not None else final_score,
-            items=query_items
-        ),
-        "rescore_sections": rescore_sections,
-        "term_factors": _extract_term_factors(explanation)
-    }
-
-
-def _build_rescore_section_from_sum_child(
-    node: Dict[str, Any],
-    idx: int
-) -> Optional[ExplainSectionRes]:
-    custom_node = _find_first_node_by_prefix(node, _SCORE_NORMALIZER_PREFIX)
-    if custom_node is not None:
-        normalizer_type = _find_normalizer_type(custom_node)
-        return ExplainSectionRes(
-            title=f"Rescore {idx} - Score Normalizer ({normalizer_type or 'unknown'})",
-            score=node.get("value"),
-            items=[_to_detail_node(node)]
-        )
-
-    function_score_node = _find_first_node_contains(node, "function score")
-    if function_score_node is not None:
-        return ExplainSectionRes(
-            title=f"Rescore {idx} - Function Score",
-            score=node.get("value"),
-            items=[_to_detail_node(node)]
-        )
-
-    return ExplainSectionRes(
-        title=f"Rescore {idx}",
-        score=node.get("value"),
-        items=[_to_detail_node(node)]
-    )
-
-
-def _build_custom_rescore_detail(
-    explanation: Dict[str, Any]
-) -> tuple[ExplainSectionRes, List[ExplainSectionRes]]:
-    details = explanation.get("details", []) or []
-
-    query_items: List[ExplainDetailNodeRes] = []
-    rescore_sections: List[ExplainSectionRes] = []
-    query_score = None
-
-    normalized_node = None
-    factor_applied_node = None
-
-    for d in details:
-        desc = d.get("description", "") or ""
-        val = d.get("value")
-
-        if desc == "score_normalizer_rescore.original_query_score" or desc == "original query score":
-            query_score = val
-            query_items.append(_to_detail_node(d))
-
-        elif desc.startswith("score_normalizer_rescore.normalized_score[type=") or desc.startswith("normalized score using ") or desc.startswith("normalized score by "):
-            normalized_node = d
-
-        elif desc.startswith("score_normalizer_rescore.factor_applied_score") or desc == "score after factor application":
-            factor_applied_node = d
-
-    if normalized_node is not None:
-        normalizer_type = _find_normalizer_type(normalized_node) or _find_normalizer_type(explanation)
-        rescore_sections.append(
-            ExplainSectionRes(
-                title=f"Rescore - Score Normalizer ({normalizer_type or 'unknown'})",
-                score=normalized_node.get("value"),
-                items=[_to_detail_node(normalized_node)]
-            )
-        )
-
-    if factor_applied_node is not None:
-        factor_mode = _find_factor_mode(factor_applied_node) or _find_factor_mode(explanation)
-        rescore_sections.append(
-            ExplainSectionRes(
-                title=f"Rescore - Factor Applied ({factor_mode or 'unknown'})",
-                score=factor_applied_node.get("value"),
-                items=[_to_detail_node(factor_applied_node)]
-            )
-        )
-
-    return (
-        ExplainSectionRes(title="Query Score", score=query_score, items=query_items),
-        rescore_sections
-    )
+    return False
 
 
 # =========================================================
-# Detail helpers
+# Term extraction
 # =========================================================
-
-def _to_detail_node(expl: Dict[str, Any]) -> ExplainDetailNodeRes:
-    children = [_to_detail_node(d) for d in (expl.get("details", []) or [])]
-    return ExplainDetailNodeRes(
-        key=(expl.get("description", "") or "")[:120],
-        label=_to_ui_label(expl.get("description", "")),
-        value=expl.get("value"),
-        description=expl.get("description"),
-        children=children,
-        expandable=len(children) > 0
-    )
-
-
-def _to_ui_label(description: str) -> str:
-    desc = description or ""
-
-    if desc.startswith("sum of:"):
-        return "Sum"
-    if desc.startswith("product of:"):
-        return "Product"
-    if desc.startswith("weight("):
-        return "BM25 Weight"
-    if desc.startswith("score(freq="):
-        return "BM25 Score"
-    if desc == "boost":
-        return "Boost"
-    if desc.startswith("idf,"):
-        return "IDF"
-    if desc.startswith("tf,"):
-        return "TF"
-    if desc.startswith("field value function:"):
-        return "Field Value Function"
-    if desc == "primaryWeight":
-        return "Primary Weight"
-    if desc == "secondaryWeight":
-        return "Secondary Weight"
-    if desc == "*:*":
-        return "Match All"
-    if desc.startswith("score_normalizer_rescore.original_query_score") or desc == "original query score":
-        return "Original Query Score"
-    if desc.startswith("score_normalizer_rescore.normalized_score") or desc.startswith("normalized score using ") or desc.startswith("normalized score by "):
-        return "Normalized Score"
-    if desc.startswith("score_normalizer_rescore.factor_applied_score") or desc == "score after factor application":
-        return "Factor Applied Score"
-    if desc.startswith("score_normalizer_rescore.factor_input_score") or desc == "score before factor application":
-        return "Factor Input Score"
-    if desc.startswith("score_normalizer_rescore.factor_mode") or desc.startswith("factor mode ["):
-        return "Factor Mode"
-    if desc.startswith("score_normalizer_rescore.factor") or desc == "factor":
-        return "Factor"
-    return desc
-
 
 def _extract_term_factors(expl: Dict[str, Any]) -> List[ExplainTermFactorRes]:
     results: List[ExplainTermFactorRes] = []
 
     def walk(node: Dict[str, Any]):
         desc = node.get("description", "") or ""
-        m = re.match(r"weight\(([^:]+):(.+?) in \d+\)", desc)
+        m = re.match(r'weight\(([^:]+):(.+?) in \d+\)', desc)
         if m:
             field = m.group(1)
             term = m.group(2)
@@ -776,12 +724,13 @@ def _extract_term_factors(expl: Dict[str, Any]) -> List[ExplainTermFactorRes]:
                     factor.idf = n.get("value")
                 elif nd.startswith("tf,"):
                     factor.tf = n.get("value")
-                elif nd.startswith("freq,"):
+                elif nd.startswith("freq,") or nd.startswith("phrasefreq="):
                     factor.freq = n.get("value")
                 elif nd.startswith("dl,"):
                     factor.dl = n.get("value")
                 elif nd.startswith("avgdl,"):
                     factor.avgdl = n.get("value")
+
                 for c in n.get("details", []) or []:
                     walk_term(c)
 
@@ -802,10 +751,7 @@ def _extract_term_factors(expl: Dict[str, Any]) -> List[ExplainTermFactorRes]:
 def _is_query_root(description: str) -> bool:
     if not description:
         return False
-    return (
-        description.startswith("weight(")
-        or description.startswith("score(")
-    )
+    return description.startswith("weight(") or description.startswith("score(")
 
 
 def _find_original_query_score(node: Dict[str, Any]) -> Optional[float]:
@@ -868,7 +814,6 @@ def _find_factor_mode(node: Dict[str, Any]) -> Optional[str]:
 
 
 def _find_normalizer_type(node: Dict[str, Any]) -> Optional[str]:
-    # 1) custom prefix type
     target = _find_first_node_by_prefix(node, _SCORE_NORMALIZER_PREFIX)
     if target is not None:
         desc = target.get("description", "") or ""
@@ -876,7 +821,6 @@ def _find_normalizer_type(node: Dict[str, Any]) -> Optional[str]:
         if m:
             return m.group(1)
 
-    # 2) normalized score using xxx
     target = _find_first_node_by_prefixes(
         node,
         [
@@ -949,9 +893,17 @@ def _find_first_node_by_prefixes(
 
     return None
 
-def _extract_field_name_from_field_value_function(desc: str) -> Optional[str]:
-    m = re.search(r"doc\['([^']+)'\]", desc)
-    return m.group(1) if m else None
+
+def _find_all_nodes_by_exact_description(node: Dict[str, Any], description: str) -> List[Dict[str, Any]]:
+    results = []
+    if (node.get("description", "") or "") == description:
+        results.append(node)
+
+    for child in node.get("details", []) or []:
+        results.extend(_find_all_nodes_by_exact_description(child, description))
+
+    return results
+
 
 def _find_all_nodes_by_prefix(node: Dict[str, Any], prefix: str) -> List[Dict[str, Any]]:
     results = []
@@ -974,30 +926,7 @@ def _find_all_nodes_contains(node: Dict[str, Any], text: str) -> List[Dict[str, 
         results.extend(_find_all_nodes_contains(child, text))
     return results
 
-def _extract_query_explanation_tree(expl: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """
-    explain 전체 트리에서 '원본 query 점수 계산 영역'만 추출한다.
 
-    우선순위:
-    1. custom rescorer 내부의 'original query score' 하위
-    2. query only explain이면 root 자체
-    3. 못 찾으면 None
-    """
-    if not expl:
-        return None
-
-    desc = expl.get("description", "") or ""
-
-    # query only
-    if _is_query_root(desc):
-        return expl
-
-    # custom rescore 내부 original query score
-    original_query_node = _find_first_node_by_exact_description(expl, "original query score")
-    if original_query_node:
-        details = original_query_node.get("details", []) or []
-        if details:
-            return details[0]
-        return original_query_node
-
-    return None
+def _extract_field_name_from_field_value_function(desc: str) -> Optional[str]:
+    m = re.search(r"doc\['([^']+)'\]", desc)
+    return m.group(1) if m else None
