@@ -31,7 +31,6 @@ class Settings(BaseSettings):
     ES_TIMEOUT: int = 30
 
     class Config:
-        env_file = "src/resources/.env"
         env_file_encoding = "utf-8"
         case_sensitive = True
         extra = "ignore"  # .env 파일의 추가 필드들을 무시
