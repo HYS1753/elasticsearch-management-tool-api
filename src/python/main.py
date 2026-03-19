@@ -10,6 +10,7 @@ from fastapi.exceptions import RequestValidationError
 
 from src.python.elasticsearch.application.endpoints.indices_endpoint import indices_endpoint
 from src.python.elasticsearch.application.endpoints.search_explain_endpoint import search_explain_endpoint
+from src.python.elasticsearch.application.endpoints.documents_endpoint import documents_endpoint
 from src.python.elasticsearch.config.connections.elasticsearch_connection_manager import EsConnectionManager, \
     init_elasticsearch_connection, close_elasticsearch_connection
 from src.python.elasticsearch.config.settings.env_settings import settings
@@ -81,6 +82,7 @@ app.add_exception_handler(BizException, biz_exception_handler)
 app.include_router(cluster_endpoint, prefix="/app/cluster", tags=["Elasticsearch Cluster API"])
 app.include_router(indices_endpoint, prefix="/app/indices", tags=["Elasticsearch Indices API"])
 app.include_router(search_explain_endpoint, prefix="/app/search/explain", tags=["Elasticsearch Search Explain API"])
+app.include_router(documents_endpoint, prefix="/app/documents", tags=["documents"])
 
 if __name__ == "__main__":
     try:
