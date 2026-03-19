@@ -654,6 +654,14 @@ def build_query_function_scores(
 
     return results
 
+def normalize_rescores(request_rescores):
+    if not request_rescores:
+        return []
+    if isinstance(request_rescores, dict):
+        return [request_rescores]
+    if isinstance(request_rescores, list):
+        return request_rescores
+    return []
 
 def build_rescore_details(
     rescore_nodes: List[Dict[str, Any]],
@@ -664,7 +672,14 @@ def build_rescore_details(
     request_rescores = request_body.get("rescore", []) or []
 
     for idx, node in enumerate(rescore_nodes, start=1):
-        req_rescore = request_rescores[idx - 1] if idx - 1 < len(request_rescores) else {}
+        request_rescores = normalize_rescores(request_rescores)
+
+        target_idx = idx - 1
+        req_rescore = (
+            request_rescores[target_idx]
+            if 0 <= target_idx < len(request_rescores)
+            else {}
+        )
 
         custom_node = _find_first_node_by_prefix(node, _SCORE_NORMALIZER_PREFIX)
         if custom_node is not None:
