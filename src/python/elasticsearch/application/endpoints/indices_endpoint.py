@@ -4,9 +4,14 @@ from fastapi import APIRouter, Query, Request
 from starlette.responses import JSONResponse
 from starlette.status import HTTP_200_OK, HTTP_500_INTERNAL_SERVER_ERROR
 
+from src.python.elasticsearch.application.schemas.requests.indices.index_action_req import (
+    IndexActionReq,
+)
 from src.python.elasticsearch.application.schemas.responses.common.common_res import CommonRes
 from src.python.elasticsearch.application.services.api.indices_service import IndicesService
-from src.python.elasticsearch.config.connections.elasticsearch_connection_manager import get_elasticsearch_client
+from src.python.elasticsearch.config.connections.elasticsearch_connection_manager import (
+    get_elasticsearch_client,
+)
 from src.python.elasticsearch.config.exceptions.biz_exceptions import BizException
 
 logger = logging.getLogger(__name__)
@@ -24,7 +29,6 @@ async def indices_placement(
     try:
         es_client = get_elasticsearch_client(request.app)
         indices_service = IndicesService(es_client=es_client)
-
         result = await indices_service.indices_placement(
             include_hidden_index=include_hidden_index,
             include_closed_index=include_closed_index,
@@ -41,7 +45,7 @@ async def indices_placement(
             status_code=e.status_code,
             content=CommonRes(
                 code=str(e.status_code),
-                message=e.message,
+                message=str(e),
                 data=None,
             ).model_dump(),
         )
@@ -66,7 +70,6 @@ async def indices(
     try:
         es_client = get_elasticsearch_client(request.app)
         indices_service = IndicesService(es_client=es_client)
-
         result = await indices_service.indices(
             include_hidden_index=include_hidden_index,
             include_closed_index=include_closed_index,
@@ -83,7 +86,7 @@ async def indices(
             status_code=e.status_code,
             content=CommonRes(
                 code=str(e.status_code),
-                message=e.message,
+                message=str(e),
                 data=None,
             ).model_dump(),
         )
@@ -107,7 +110,6 @@ async def index_detail(
     try:
         es_client = get_elasticsearch_client(request.app)
         indices_service = IndicesService(es_client=es_client)
-
         result = await indices_service.index_detail(index_name=index_name)
 
         return JSONResponse(
@@ -121,7 +123,7 @@ async def index_detail(
             status_code=e.status_code,
             content=CommonRes(
                 code=str(e.status_code),
-                message=e.message,
+                message=str(e),
                 data=None,
             ).model_dump(),
         )
@@ -132,6 +134,47 @@ async def index_detail(
             content=CommonRes(
                 code=str(HTTP_500_INTERNAL_SERVER_ERROR),
                 message=f"Elasticsearch 관리도구 Index Detail 처리 중 오류가 발생했습니다: {str(e)}",
+                data=None,
+            ).model_dump(),
+        )
+
+
+@router.post("/indices/{index_name}/actions", response_model=CommonRes, status_code=200)
+async def index_action(
+    request: Request,
+    index_name: str,
+    action_req: IndexActionReq,
+) -> JSONResponse:
+    try:
+        es_client = get_elasticsearch_client(request.app)
+        indices_service = IndicesService(es_client=es_client)
+        result = await indices_service.index_action(
+            index_name=index_name,
+            action_req=action_req,
+        )
+
+        return JSONResponse(
+            status_code=HTTP_200_OK,
+            headers={"Content-Type": "application/json"},
+            content=CommonRes(data=result.model_dump(mode="json")).model_dump(),
+        )
+    except BizException as e:
+        logger.error(f"Error in Index Action: {e}")
+        return JSONResponse(
+            status_code=e.status_code,
+            content=CommonRes(
+                code=str(e.status_code),
+                message=str(e),
+                data=None,
+            ).model_dump(),
+        )
+    except Exception as e:
+        logger.error(f"Error in Index Action: {e}")
+        return JSONResponse(
+            status_code=HTTP_500_INTERNAL_SERVER_ERROR,
+            content=CommonRes(
+                code=str(HTTP_500_INTERNAL_SERVER_ERROR),
+                message=f"Elasticsearch 관리도구 Index Action 처리 중 오류가 발생했습니다: {str(e)}",
                 data=None,
             ).model_dump(),
         )
