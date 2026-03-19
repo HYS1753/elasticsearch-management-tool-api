@@ -630,6 +630,25 @@ def build_query_function_scores(
             )
             continue
 
+        if "script_score" in fn:
+            script_body = fn["script_score"] or {}
+            matched_script_node = _find_matching_script_score_node(query_expl, fn)
+
+            results.append(
+                ExplainFunctionScoreRes(
+                    label=f"Function {idx} - Script Score",
+                    score=matched_script_node.get("value") if matched_script_node else None,
+                    field=_extract_script_fields(script_body),
+                    source_value=_extract_script_source_values(source, script_body),
+                    description=matched_script_node.get("description") if matched_script_node else None,
+                    operation=score_mode,
+                    filter_label=filter_label,
+                    matched=matched_script_node is not None,
+                    params=script_body,
+                )
+            )
+            continue
+
         for decay_key in ("gauss", "exp", "linear"):
             if decay_key in fn:
                 decay_body = fn[decay_key]
@@ -838,6 +857,27 @@ def _build_rescore_function_item(
             params=fvf
         )
 
+    if "script_score" in fn:
+        script_body = fn["script_score"] or {}
+        return ExplainFunctionScoreRes(
+            label=f"Function {order} - Script Score",
+            score=matched_node.get("value") if matched_node else None,
+            field=_extract_script_fields(script_body),
+            source_value=_extract_script_source_values(source, script_body),
+            description=_build_function_description(
+                base="script_score",
+                filter_label=filter_label,
+                matched_node=matched_node,
+                score_mode=score_mode,
+                boost_mode=boost_mode,
+                fn_payload=script_body,
+            ),
+            operation=f"score_mode={score_mode}, boost_mode={boost_mode}",
+            filter_label=filter_label,
+            matched=matched,
+            params=script_body,
+        )
+
     for decay_key in ("gauss", "exp", "linear"):
         if decay_key in fn:
             decay_body = fn[decay_key]
@@ -910,6 +950,9 @@ def _find_matching_rescore_function_node(
         field_name = fn["field_value_factor"].get("field")
         if field_name:
             return _find_first_node_contains(node, f"doc['{field_name}']")
+
+    if "script_score" in fn:
+        return _find_matching_script_score_node(node, fn)
 
     if "filter" in fn:
         filter_obj = fn["filter"]
@@ -1327,6 +1370,65 @@ def _find_all_nodes_contains(node: Dict[str, Any], text: str) -> List[Dict[str, 
         results.extend(_find_all_nodes_contains(child, text))
     return results
 
+def _find_matching_script_score_node(
+    node: Dict[str, Any],
+    fn: Dict[str, Any]
+) -> Optional[Dict[str, Any]]:
+    script_body = fn.get("script_score", {}) or {}
+    script = script_body.get("script", {}) or {}
+
+    # 1순위: 설명 prefix로 직접 찾기
+    exact = _find_first_node_contains(node, "script score function, computed with script:")
+    if exact is not None:
+        return exact
+
+    # 2순위: script source 일부로 찾기
+    source = script.get("source") or script.get("idOrCode")
+    if source:
+        snippet = str(source)[:40]
+        exact = _find_first_node_contains(node, snippet)
+        if exact is not None:
+            return exact
+
+    # 3순위: params나 doc['FIELD'] 기반으로 찾기
+    fields = _extract_script_field_names(script)
+    for field in fields:
+        exact = _find_first_node_contains(node, f"doc['{field}']")
+        if exact is not None:
+            parent = _find_parent_function_score_product(node, exact)
+            return parent or exact
+
+    return None
+
+def _extract_script_field_names(script_obj: Dict[str, Any]) -> List[str]:
+    script_source = (
+        script_obj.get("source")
+        or script_obj.get("idOrCode")
+        or ""
+    )
+    return list(dict.fromkeys(re.findall(r"doc\[['\"]([^'\"]+)['\"]\]", str(script_source))))
+
+def _extract_script_fields(script_score_obj: Dict[str, Any]) -> Optional[str]:
+    script = script_score_obj.get("script", {}) or script_score_obj
+    fields = _extract_script_field_names(script)
+    if not fields:
+        return None
+    return ", ".join(fields)
+
+def _extract_script_source_values(
+    source: Dict[str, Any],
+    script_score_obj: Dict[str, Any]
+) -> Optional[Any]:
+    script = script_score_obj.get("script", {}) or script_score_obj
+    fields = _extract_script_field_names(script)
+    if not fields:
+        return None
+
+    if len(fields) == 1:
+        return source.get(fields[0])
+
+    return {field: source.get(field) for field in fields}
+
 def _find_matching_function_node(
     query_expl: Dict[str, Any],
     filter_label: Optional[str],
@@ -1390,7 +1492,11 @@ def _find_matching_function_node(
             return _find_first_node_contains(query_expl, f"doc['{field_name}']")
         return None
 
-    # 6. decay
+    # 6. Script Score
+    if "script_score" in fn:
+        return _find_matching_script_score_node(query_expl, fn)
+
+    # 7. decay
     for decay_key in ("gauss", "exp", "linear"):
         if decay_key in fn:
             field_name = next(iter(fn[decay_key].keys()))
