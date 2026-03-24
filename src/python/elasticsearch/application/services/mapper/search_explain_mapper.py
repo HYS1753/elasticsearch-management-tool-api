@@ -882,7 +882,10 @@ def _build_rescore_function_item(
         if decay_key in fn:
             decay_body = fn[decay_key]
             field_name = next(iter(decay_body.keys()))
-            decay_score = _extract_first_numeric_leaf_value(matched_node)
+
+            decay_value_node = _find_decay_value_node(matched_node, field_name)
+            decay_score = decay_value_node.get("value") if decay_value_node is not None else None
+
             return ExplainFunctionScoreRes(
                 label=f"Function {order} - {decay_key.title()} Decay",
                 score=decay_score,
@@ -891,14 +894,14 @@ def _build_rescore_function_item(
                 description=_build_function_description(
                     base=f"{decay_key} decay",
                     filter_label=filter_label,
-                    matched_node=matched_node,
+                    matched_node=decay_value_node or matched_node,
                     score_mode=score_mode,
                     boost_mode=boost_mode,
                     fn_payload=decay_body
                 ),
                 operation=f"score_mode={score_mode}, boost_mode={boost_mode}",
                 filter_label=filter_label,
-                matched=matched,
+                matched=decay_value_node is not None or matched,
                 params=decay_body
             )
 
@@ -993,11 +996,19 @@ def _find_matching_rescore_function_node(
                     span_field, span_value = next(iter(clause["span_term"].items()))
                     expected_terms.append(f"{span_field}:{span_value}")
 
+            # 1순위: explain 에 spanNear(...) 가 그대로 남아있는 경우
             candidates = _find_all_nodes_contains(node, "spanNear(")
             for candidate in candidates:
                 desc = candidate.get("description", "") or ""
                 if f", {slop}," in desc and all(term in desc for term in expected_terms):
                     return _find_parent_function_score_product(node, candidate)
+
+            # 2순위: explain 이 rewrite 되어 match filter: FIELD:TERM 으로 나온 경우
+            return _find_span_near_rewritten_parent(
+                node=node,
+                expected_terms=expected_terms,
+                target_weight=fn.get("weight"),
+            )
 
     for decay_key in ("gauss", "exp", "linear"):
         if decay_key in fn:
@@ -1087,6 +1098,87 @@ def _find_parent_function_score_product(root: Dict[str, Any], target: Dict[str, 
         return None
 
     return walk(root, [])
+
+def _find_decay_value_node(
+    node: Optional[Dict[str, Any]],
+    field_name: str,
+) -> Optional[Dict[str, Any]]:
+    if node is None or not field_name:
+        return None
+
+    exact = _find_first_node_contains(node, f"Function for field {field_name}:")
+    if exact is not None:
+        return exact
+
+    candidates = _find_all_nodes_contains(node, "Function for field ")
+    for candidate in candidates:
+        desc = candidate.get("description", "") or ""
+        if f"field {field_name}:" in desc:
+            return candidate
+
+    return None
+
+
+def _float_equals(a: Optional[float], b: Optional[float], tol: float = 1e-6) -> bool:
+    if a is None or b is None:
+        return False
+    return abs(float(a) - float(b)) <= tol
+
+
+def _node_contains_all_terms(
+    node: Optional[Dict[str, Any]],
+    terms: List[str],
+) -> bool:
+    if node is None:
+        return False
+
+    desc = node.get("description", "") or ""
+    for term in terms:
+        if term in desc:
+            continue
+        if _find_first_node_contains(node, term) is None:
+            return False
+
+    return True
+
+
+def _find_span_near_rewritten_parent(
+    node: Dict[str, Any],
+    expected_terms: List[str],
+    target_weight: Optional[float] = None,
+) -> Optional[Dict[str, Any]]:
+    # 1차: rewrite 된 match filter 노드 기준 탐색
+    rewritten_candidates = _find_all_nodes_contains(node, "match filter:")
+    for candidate in rewritten_candidates:
+        parent = _find_parent_function_score_product(node, candidate)
+        if parent is None:
+            continue
+
+        if not _node_contains_all_terms(parent, expected_terms):
+            continue
+
+        if target_weight is not None:
+            applied_score = _extract_applied_function_score(parent)
+            if not _float_equals(applied_score, target_weight):
+                continue
+
+        return parent
+
+    # 2차: function score product 단위 전체 탐색
+    product_candidates = _find_all_nodes_contains(node, "function score, product of:")
+    for candidate in product_candidates:
+        if not _node_contains_all_terms(candidate, expected_terms):
+            continue
+
+        if target_weight is not None:
+            applied_score = _extract_applied_function_score(candidate)
+            if not _float_equals(applied_score, target_weight):
+                continue
+
+        return candidate
+
+    return None
+
 
 # =========================================================
 # Explain tree extractors
@@ -1478,12 +1570,19 @@ def _find_matching_function_node(
                 span_field, span_value = next(iter(clause["span_term"].items()))
                 expected_terms.append(f"{span_field}:{span_value}")
 
+        # 1순위: explain 에 spanNear(...) 가 그대로 남아있는 경우
         candidates = _find_all_nodes_contains(query_expl, "spanNear(")
         for candidate in candidates:
             desc = candidate.get("description", "") or ""
             if f", {slop}," in desc and all(term in desc for term in expected_terms):
                 return _find_parent_function_score_product(query_expl, candidate)
-        return None
+
+        # 2순위: explain 이 rewrite 된 경우
+        return _find_span_near_rewritten_parent(
+            node=query_expl,
+            expected_terms=expected_terms,
+            target_weight=fn.get("weight"),
+        )
 
     # 5. field_value_factor
     if "field_value_factor" in fn:
