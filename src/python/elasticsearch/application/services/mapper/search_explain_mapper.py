@@ -653,19 +653,20 @@ def build_query_function_scores(
             if decay_key in fn:
                 decay_body = fn[decay_key]
                 field_name = next(iter(decay_body.keys()))
-                matched_decay_node = _find_first_node_contains(query_expl, f"Function for field {field_name}:")
-                matched_decay_value = _extract_first_numeric_leaf_value(matched_decay_node)
+
+                matched_decay_parent = _find_matching_function_node(query_expl, filter_label, fn)
+                matched_decay_node = _find_decay_value_node(matched_decay_parent, field_name)
 
                 results.append(
                     ExplainFunctionScoreRes(
                         label=f"Function {idx} - {decay_key.title()} Decay",
-                        score=matched_decay_value,
+                        score=matched_decay_parent.get("value") if matched_decay_parent else None,
                         field=field_name,
                         source_value=source.get(field_name),
                         description=matched_decay_node.get("description") if matched_decay_node else None,
                         operation=score_mode,
                         filter_label=filter_label,
-                        matched=matched_decay_node is not None,
+                        matched=matched_decay_parent is not None,
                         params=decay_body
                     )
                 )
@@ -883,12 +884,14 @@ def _build_rescore_function_item(
             decay_body = fn[decay_key]
             field_name = next(iter(decay_body.keys()))
 
+            # 실제 UI score 는 raw decay 값이 아니라
+            # weight 까지 적용된 function score 결과를 보여줘야 한다.
             decay_value_node = _find_decay_value_node(matched_node, field_name)
-            decay_score = decay_value_node.get("value") if decay_value_node is not None else None
+            applied_decay_score = matched_node.get("value") if matched_node is not None else None
 
             return ExplainFunctionScoreRes(
                 label=f"Function {order} - {decay_key.title()} Decay",
-                score=decay_score,
+                score=applied_decay_score,
                 field=field_name,
                 source_value=source.get(field_name),
                 description=_build_function_description(
@@ -901,7 +904,7 @@ def _build_rescore_function_item(
                 ),
                 operation=f"score_mode={score_mode}, boost_mode={boost_mode}",
                 filter_label=filter_label,
-                matched=decay_value_node is not None or matched,
+                matched=matched_node is not None,
                 params=decay_body
             )
 
@@ -965,6 +968,13 @@ def _find_matching_rescore_function_node(
             exact = _find_first_node_contains(node, f"match filter: {filter_label}")
             if exact is not None:
                 return _find_parent_function_score_product(node, exact)
+
+        if "terms" in filter_obj:
+            field_name, values = next(iter(filter_obj["terms"].items()))
+            if isinstance(values, list):
+                matched_parent = _find_terms_filter_parent(node, field_name, values)
+                if matched_parent is not None:
+                    return matched_parent
 
         if "exists" in filter_obj:
             field_name = filter_obj["exists"].get("field")
@@ -1098,6 +1108,35 @@ def _find_parent_function_score_product(root: Dict[str, Any], target: Dict[str, 
         return None
 
     return walk(root, [])
+
+def _find_terms_filter_parent(
+    node: Dict[str, Any],
+    field_name: str,
+    values: List[Any],
+) -> Optional[Dict[str, Any]]:
+    if not field_name or not values:
+        return None
+
+    candidates = _find_all_nodes_contains(node, "match filter:")
+    expected_values = {str(v) for v in values}
+
+    for candidate in candidates:
+        desc = candidate.get("description", "") or ""
+
+        if f"match filter: {field_name}:(" not in desc:
+            continue
+
+        m = re.search(rf"match filter: {re.escape(field_name)}:\((.*?)\)", desc)
+        if not m:
+            continue
+
+        actual_values = set(token.strip() for token in m.group(1).split() if token.strip())
+
+        if actual_values == expected_values:
+            parent = _find_parent_function_score_product(node, candidate)
+            return parent or candidate
+
+    return None
 
 def _find_decay_value_node(
     node: Optional[Dict[str, Any]],
@@ -1537,6 +1576,15 @@ def _find_matching_function_node(
                 return _find_parent_function_score_product(query_expl, exact)
         return None
 
+    # 1-2. terms filter
+    if "filter" in fn and "terms" in fn["filter"]:
+        field_name, values = next(iter(fn["filter"]["terms"].items()))
+        if isinstance(values, list):
+            matched_parent = _find_terms_filter_parent(query_expl, field_name, values)
+            if matched_parent is not None:
+                return matched_parent
+        return None
+
     # 2. exists filter
     if "filter" in fn and "exists" in fn["filter"]:
         field_name = fn["filter"]["exists"].get("field")
@@ -1611,6 +1659,13 @@ def _describe_filter(filter_obj: Optional[Dict[str, Any]]) -> Optional[str]:
         field, value_obj = next(iter(filter_obj["term"].items()))
         value = value_obj.get("value") if isinstance(value_obj, dict) else value_obj
         return f"{field}:{value}"
+
+    if "terms" in filter_obj:
+        field, values = next(iter(filter_obj["terms"].items()))
+        if isinstance(values, list):
+            joined = ", ".join(str(v) for v in values)
+            return f"{field} in [{joined}]"
+        return f"{field} in {values}"
 
     if "match" in filter_obj:
         field, value_obj = next(iter(filter_obj["match"].items()))
