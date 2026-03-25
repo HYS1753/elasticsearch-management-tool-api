@@ -594,13 +594,17 @@ def build_query_function_scores(
 
         if "weight" in fn:
             applied_score = _extract_applied_function_score(matched_node)
+            filter_field, filter_source_value = _extract_filter_field_and_source_value(
+                source=source,
+                filter_obj=fn.get("filter")
+            )
 
             results.append(
                 ExplainFunctionScoreRes(
                     label=f"Function {idx} - Weight",
                     score=applied_score if applied_score is not None else (fn.get("weight") if matched else 0.0),
-                    field=None,
-                    source_value=None,
+                    field=filter_field,
+                    source_value=filter_source_value,
                     description=matched_node.get("description") if matched_node is not None else None,
                     operation=score_mode,
                     filter_label=filter_label,
@@ -910,11 +914,16 @@ def _build_rescore_function_item(
 
     if "weight" in fn:
         applied_score = _extract_applied_function_score(matched_node)
+        filter_field, filter_source_value = _extract_filter_field_and_source_value(
+            source=source,
+            filter_obj=fn.get("filter")
+        )
+
         return ExplainFunctionScoreRes(
             label=f"Function {order} - Weight",
             score=applied_score if applied_score is not None else (fn.get("weight") if matched else 0.0),
-            field=None,
-            source_value=None,
+            field=filter_field,
+            source_value=filter_source_value,
             description=_build_function_description(
                 base="weight function",
                 filter_label=filter_label,
@@ -1559,6 +1568,57 @@ def _extract_script_source_values(
         return source.get(fields[0])
 
     return {field: source.get(field) for field in fields}
+
+def _normalize_source_field_name(field_name: Optional[str]) -> Optional[str]:
+    if not field_name:
+        return None
+
+    # span 전용 서브필드는 원본 source 필드명으로 되돌린다.
+    # 예: GOODS_NM.span -> GOODS_NM
+    if field_name.endswith(".span"):
+        return field_name[:-5]
+
+    return field_name
+
+
+def _extract_filter_field_and_source_value(
+    source: Dict[str, Any],
+    filter_obj: Optional[Dict[str, Any]]
+) -> (Optional[str], Optional[Any]):
+    if not filter_obj:
+        return None, None
+
+    if "term" in filter_obj:
+        field_name = next(iter(filter_obj["term"].keys()))
+        source_field = _normalize_source_field_name(field_name)
+        return source_field, source.get(source_field)
+
+    if "terms" in filter_obj:
+        field_name = next(iter(filter_obj["terms"].keys()))
+        source_field = _normalize_source_field_name(field_name)
+        return source_field, source.get(source_field)
+
+    if "span_near" in filter_obj:
+        clauses = filter_obj["span_near"].get("clauses", []) or []
+        span_fields: List[str] = []
+
+        for clause in clauses:
+            if "span_term" in clause:
+                span_field = next(iter(clause["span_term"].keys()))
+                normalized = _normalize_source_field_name(span_field)
+                if normalized and normalized not in span_fields:
+                    span_fields.append(normalized)
+
+        if not span_fields:
+            return None, None
+
+        if len(span_fields) == 1:
+            field_name = span_fields[0]
+            return field_name, source.get(field_name)
+
+        return ", ".join(span_fields), {field: source.get(field) for field in span_fields}
+
+    return None, None
 
 def _find_matching_function_node(
     query_expl: Dict[str, Any],
