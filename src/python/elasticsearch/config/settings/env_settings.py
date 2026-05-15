@@ -20,6 +20,12 @@ class Settings(BaseSettings):
     LOG_DIR: str = "logs"
     LOG_FILE_NAME: str = "app.log"
 
+    # MongoDB
+    MONGO_URI: str = "mongodb://localhost:27017"
+    MONGO_DB_NAME: str = "elasticsearch_management"
+    MONGO_MAX_CONNECTIONS: int = 100
+    MONGO_TIMEOUT: int = 30000  # ms
+
     # Elasticsearch
     ES_HOST: str = "https://localhost:9200"
     ES_API_KEY: str = ""
