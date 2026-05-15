@@ -26,6 +26,11 @@ class Settings(BaseSettings):
     MONGO_MAX_CONNECTIONS: int = 100
     MONGO_TIMEOUT: int = 30000  # ms
 
+    # JWT Auth
+    JWT_SECRET_KEY: str = "super-secret-key-for-admin-panel"
+    JWT_ALGORITHM: str = "HS256"
+    JWT_ACCESS_TOKEN_EXPIRE_HOURS: int = 24
+
     # Elasticsearch
     ES_HOST: str = "https://localhost:9200"
     ES_API_KEY: str = ""

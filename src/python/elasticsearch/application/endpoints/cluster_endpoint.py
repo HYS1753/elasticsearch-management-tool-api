@@ -1,13 +1,14 @@
 import logging, asyncio
 
 from typing import Optional, List, Literal
-from fastapi import APIRouter, Request, Query
+from fastapi import APIRouter, Request, Query, Depends
 from starlette.responses import JSONResponse
 from starlette.status import HTTP_500_INTERNAL_SERVER_ERROR, HTTP_200_OK
 
 from src.python.elasticsearch.application.schemas.responses.common.common_res import CommonRes
 from src.python.elasticsearch.application.services.api.cluster_service import ClusterService
 from src.python.elasticsearch.config.connections.elasticsearch_connection_manager import get_elasticsearch_client
+from src.python.elasticsearch.application.endpoints.auth_endpoint import get_current_user
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +16,7 @@ router = APIRouter()
 cluster_endpoint = router
 
 @router.get("/node-status", response_model=CommonRes, status_code=200)
-async def node_status(request: Request) -> JSONResponse:
+async def node_status(request: Request, _=Depends(get_current_user)) -> JSONResponse:
     """ Node Status API """
     try:
         es_client = get_elasticsearch_client(request.app)
@@ -42,7 +43,7 @@ async def node_status(request: Request) -> JSONResponse:
 
 
 @router.get("/cluster-status", response_model=CommonRes, status_code=200)
-async def cluster_status(request: Request) -> JSONResponse:
+async def cluster_status(request: Request, _=Depends(get_current_user)) -> JSONResponse:
     """ Cluster State API """
     try:
         es_client = get_elasticsearch_client(request.app)

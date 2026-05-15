@@ -1,6 +1,6 @@
 import logging
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, Depends
 from starlette.responses import JSONResponse
 from starlette.status import HTTP_200_OK, HTTP_500_INTERNAL_SERVER_ERROR
 
@@ -15,6 +15,7 @@ from src.python.elasticsearch.config.connections.elasticsearch_connection_manage
     get_elasticsearch_client,
 )
 from src.python.elasticsearch.config.exceptions.biz_exceptions import BizException
+from src.python.elasticsearch.application.endpoints.auth_endpoint import get_current_user
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +24,7 @@ documents_endpoint = router
 
 
 @router.get("/indices", response_model=CommonRes, status_code=200)
-async def document_indices(request: Request) -> JSONResponse:
+async def document_indices(request: Request, _=Depends(get_current_user)) -> JSONResponse:
     try:
         es_client = get_elasticsearch_client(request.app)
         documents_service = DocumentsService(es_client=es_client)
@@ -60,6 +61,7 @@ async def document_indices(request: Request) -> JSONResponse:
 async def search_documents(
     request: Request,
     search_req: DocumentSearchReq,
+    _=Depends(get_current_user),
 ) -> JSONResponse:
     try:
         es_client = get_elasticsearch_client(request.app)

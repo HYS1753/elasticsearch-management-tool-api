@@ -6,11 +6,14 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "aiohttp>=3.13.2",
+    "bcrypt>=5.0.0",
     "elasticsearch>=9.2.0",
     "fastapi>=0.116.1",
     "motor>=3.7.1",
+    "passlib>=1.7.4",
     "pydantic>=2.11.7",
     "pydantic-settings>=2.10.1",
+    "pyjwt>=2.12.1",
     "uvicorn>=0.35.0",
 ]
 

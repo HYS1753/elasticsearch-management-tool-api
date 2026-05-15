@@ -1,6 +1,6 @@
 import logging
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, Query, Request, Depends
 from starlette.responses import JSONResponse
 from starlette.status import HTTP_200_OK, HTTP_500_INTERNAL_SERVER_ERROR
 
@@ -13,6 +13,9 @@ from src.python.elasticsearch.config.connections.elasticsearch_connection_manage
     get_elasticsearch_client,
 )
 from src.python.elasticsearch.config.exceptions.biz_exceptions import BizException
+from src.python.elasticsearch.application.endpoints.auth_endpoint import get_current_user
+from src.python.elasticsearch.application.endpoints.rbac import require_role
+from src.python.elasticsearch.common.enums.user_role import UserRole
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +28,7 @@ async def indices_placement(
     request: Request,
     include_hidden_index: bool = Query(default=False, description="숨김 인덱스 포함 여부"),
     include_closed_index: bool = Query(default=False, description="닫힌 인덱스 포함 여부"),
+    _=Depends(get_current_user),
 ) -> JSONResponse:
     try:
         es_client = get_elasticsearch_client(request.app)
@@ -66,6 +70,7 @@ async def indices(
     request: Request,
     include_hidden_index: bool = Query(default=False, description="숨김 인덱스 포함 여부"),
     include_closed_index: bool = Query(default=False, description="닫힌 인덱스 포함 여부"),
+    _=Depends(get_current_user),
 ) -> JSONResponse:
     try:
         es_client = get_elasticsearch_client(request.app)
@@ -106,6 +111,7 @@ async def indices(
 async def index_detail(
     request: Request,
     index_name: str,
+    _=Depends(get_current_user),
 ) -> JSONResponse:
     try:
         es_client = get_elasticsearch_client(request.app)
@@ -144,6 +150,7 @@ async def index_action(
     request: Request,
     index_name: str,
     action_req: IndexActionReq,
+    _=Depends(require_role(UserRole.ADMIN, UserRole.WRITER)),
 ) -> JSONResponse:
     try:
         es_client = get_elasticsearch_client(request.app)

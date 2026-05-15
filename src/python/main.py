@@ -24,6 +24,9 @@ from src.python.elasticsearch.config.exceptions.biz_exceptions import BizExcepti
 from src.python.elasticsearch.application.endpoints.cluster_endpoint import cluster_endpoint
 from src.python.elasticsearch.config.connections.mongodb_connection_manager import init_mongodb_connection, close_mongodb_connection
 from src.python.elasticsearch.application.endpoints.dictionary_endpoint import dictionary_endpoint
+from src.python.elasticsearch.application.endpoints.auth_endpoint import auth_endpoint
+from src.python.elasticsearch.application.services.api.auth_service import AuthService
+from src.python.elasticsearch.application.repository.mongodb.user_repository import UserRepository
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +44,10 @@ async def lifespan(app: FastAPI):
         # Connection 초기화
         init_elasticsearch_connection(app)
         init_mongodb_connection(app)
+
+        # Initialize default admin if no users exist
+        auth_service = AuthService(UserRepository(app.state.mongo_connection_manager))
+        await auth_service.initialize_admin_if_not_exists()
 
         # Application start
         yield
@@ -88,6 +95,7 @@ app.include_router(indices_endpoint, prefix="/app/indices", tags=["Elasticsearch
 app.include_router(search_explain_endpoint, prefix="/app/search/explain", tags=["Elasticsearch Search Explain API"])
 app.include_router(documents_endpoint, prefix="/app/documents", tags=["documents"])
 app.include_router(dictionary_endpoint, prefix="/app/dictionaries", tags=["Dictionary Management API"])
+app.include_router(auth_endpoint, prefix="/app/auth", tags=["Auth API"])
 
 if __name__ == "__main__":
     try:

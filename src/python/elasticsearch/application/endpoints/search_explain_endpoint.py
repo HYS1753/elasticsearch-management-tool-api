@@ -1,6 +1,6 @@
 import logging
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, Depends
 from starlette.responses import JSONResponse
 from starlette.status import HTTP_200_OK, HTTP_500_INTERNAL_SERVER_ERROR
 
@@ -8,6 +8,7 @@ from src.python.elasticsearch.application.schemas.responses.common.common_res im
 from src.python.elasticsearch.application.schemas.requests.search.search_explain_req import SearchExplainSummaryReq, SearchExplainDetailReq
 from src.python.elasticsearch.application.services.api.search_explain_service import SearchExplainService
 from src.python.elasticsearch.config.connections.elasticsearch_connection_manager import get_elasticsearch_client
+from src.python.elasticsearch.application.endpoints.auth_endpoint import get_current_user
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +17,7 @@ search_explain_endpoint = router
 
 
 @router.post("/summary", response_model=CommonRes, status_code=200)
-async def explain_summary(request: Request, body: SearchExplainSummaryReq) -> JSONResponse:
+async def explain_summary(request: Request, body: SearchExplainSummaryReq, _=Depends(get_current_user)) -> JSONResponse:
     try:
         es_client = get_elasticsearch_client(request.app)
         service = SearchExplainService(es_client=es_client)
@@ -40,7 +41,7 @@ async def explain_summary(request: Request, body: SearchExplainSummaryReq) -> JS
 
 
 @router.post("/detail", response_model=CommonRes, status_code=200)
-async def explain_detail(request: Request, body: SearchExplainDetailReq) -> JSONResponse:
+async def explain_detail(request: Request, body: SearchExplainDetailReq, _=Depends(get_current_user)) -> JSONResponse:
     try:
         es_client = get_elasticsearch_client(request.app)
         service = SearchExplainService(es_client=es_client)
