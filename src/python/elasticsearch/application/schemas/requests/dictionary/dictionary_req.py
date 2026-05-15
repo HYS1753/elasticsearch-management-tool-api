@@ -37,10 +37,10 @@ class SynonymDictionaryUpdateReq(DictionaryBaseUpdateReq):
 # Correction Dictionary
 class CorrectionDictionaryCreateReq(DictionaryBaseCreateReq):
     incorrect: str
-    corrected: str
-
+    corrected: List[str]
+    
 class CorrectionDictionaryUpdateReq(DictionaryBaseUpdateReq):
-    corrected: Optional[str] = None
+    corrected: Optional[List[str]] = None
 
 # Stopword Dictionary
 class StopwordDictionaryCreateReq(DictionaryBaseCreateReq):

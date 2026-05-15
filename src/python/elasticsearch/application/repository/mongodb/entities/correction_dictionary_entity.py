@@ -2,4 +2,4 @@ from src.python.elasticsearch.application.repository.mongodb.entities.dictionary
 
 class CorrectionDictionaryEntity(DictionaryBaseEntity):
     incorrect: str
-    corrected: str
+    corrected: list[str]
