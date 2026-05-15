@@ -38,6 +38,7 @@ class Settings(BaseSettings):
 
     class Config:
         env_file_encoding = "utf-8"
+        env_file = "src/resources/.env"
         case_sensitive = True
         extra = "ignore"  # .env 파일의 추가 필드들을 무시
 
