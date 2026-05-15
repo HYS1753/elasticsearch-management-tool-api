@@ -22,6 +22,8 @@ from src.python.elasticsearch.config.exceptions.exception_handlers import (
 )
 from src.python.elasticsearch.config.exceptions.biz_exceptions import BizException
 from src.python.elasticsearch.application.endpoints.cluster_endpoint import cluster_endpoint
+from src.python.elasticsearch.config.connections.mongodb_connection_manager import init_mongodb_connection, close_mongodb_connection
+from src.python.elasticsearch.application.endpoints.dictionary_endpoint import dictionary_endpoint
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +40,7 @@ async def lifespan(app: FastAPI):
     try:
         # Connection 초기화
         init_elasticsearch_connection(app)
+        init_mongodb_connection(app)
 
         # Application start
         yield
@@ -49,6 +52,7 @@ async def lifespan(app: FastAPI):
         logger.info(f"=========================================================")
         logger.info(f"{settings.APPLICATION_NAME} Application shutdown start")
         await close_elasticsearch_connection(app=app)
+        await close_mongodb_connection(app=app)
         logger.info(f"{settings.APPLICATION_NAME} Application shutdown complete")
         logger.info(f"=========================================================")
 
@@ -83,6 +87,7 @@ app.include_router(cluster_endpoint, prefix="/app/cluster", tags=["Elasticsearch
 app.include_router(indices_endpoint, prefix="/app/indices", tags=["Elasticsearch Indices API"])
 app.include_router(search_explain_endpoint, prefix="/app/search/explain", tags=["Elasticsearch Search Explain API"])
 app.include_router(documents_endpoint, prefix="/app/documents", tags=["documents"])
+app.include_router(dictionary_endpoint, prefix="/app/dictionaries", tags=["Dictionary Management API"])
 
 if __name__ == "__main__":
     try:
