@@ -102,21 +102,31 @@ class Settings(BaseSettings):
             servers_str = servers_str[1:-1].strip()
 
         try:
+            # 1. Attempt standard JSON parsing first
             servers = json.loads(servers_str)
-            if isinstance(servers, list):
-                normalized = []
-                for s in servers:
-                    normalized.append({
-                        "host": s.get("host") or s.get("ip"),
-                        "port": s.get("port") or 22,
-                        "username": s.get("username"),
-                        "password": s.get("password"),
-                        "key_path": s.get("key_path")
-                    })
-                return normalized
-        except Exception as e:
-            import logging
-            logging.getLogger(__name__).error(f"Failed to parse SSH_SERVERS JSON: {e}")
+        except Exception:
+            # 2. Fallback: Repair single-quoted python-dict-like string into valid JSON
+            try:
+                sanitized_str = servers_str.replace("'", '"')
+                servers = json.loads(sanitized_str)
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error(
+                    f"Failed to parse SSH_SERVERS JSON even after single-quote correction: {e}"
+                )
+                return []
+
+        if isinstance(servers, list):
+            normalized = []
+            for s in servers:
+                normalized.append({
+                    "host": s.get("host") or s.get("ip"),
+                    "port": s.get("port") or 22,
+                    "username": s.get("username"),
+                    "password": s.get("password"),
+                    "key_path": s.get("key_path")
+                })
+            return normalized
         return []
 
 # 환경 변수 인스턴스 생성
