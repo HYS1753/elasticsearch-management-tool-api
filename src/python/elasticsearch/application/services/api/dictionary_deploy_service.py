@@ -628,24 +628,46 @@ class DictionaryDeployService:
                                 "test_nori_tokenizer": {
                                     "type": "nori_tokenizer",
                                     "decompound_mode": "mixed",
-                                    "user_dictionary": "noun_test.txt"
+                                    "user_dictionary": "dictionary/noun_test.txt"
                                 }
                             },
                             "filter": {
+                                "test_pos_filter": {
+                                    "stoptags": [
+                                        "SC",
+                                        "SE",
+                                        "SF",
+                                        "SP",
+                                        "SSC",
+                                        "SSO",
+                                        "SY",
+                                        "VCN",
+                                        "VCP",
+                                        "VSV",
+                                        "VX"
+                                    ],
+                                    "type": "nori_part_of_speech"
+                                },
                                 "test_synonym_filter": {
                                     "type": "synonym",
-                                    "synonyms_path": "synonym_test.txt"
+                                    "synonyms_path": "dictionary/synonym_test.txt"
                                 },
                                 "test_stopword_filter": {
                                     "type": "stop",
-                                    "stopwords_path": "stop_test.txt"
+                                    "stopwords_path": "dictionary/stop_test.txt"
                                 }
                             },
                             "analyzer": {
                                 "test_analyzer": {
                                     "type": "custom",
                                     "tokenizer": "test_nori_tokenizer",
-                                    "filter": ["lowercase", "test_synonym_filter", "test_stopword_filter"]
+                                    "filter": [
+                                        "lowercase", 
+                                        "test_pos_filter",
+                                        "test_synonym_filter", 
+                                        "test_stopword_filter",
+                                        "remove_duplicates"
+                                    ]
                                 }
                             }
                         }
