@@ -18,12 +18,12 @@ graph TD
     UI[Management UI] -->|HTTP 요청| API[FastAPI 엔드포인트]
     API -->|서비스 주입| DDS[DictionaryDeployService]
     
-    subgraph 리포지토리 레이어 (Repository Layer)
+    subgraph rep_layer ["리포지토리 레이어 (Repository Layer)"]
         DDS -->|상태 조회 및 업데이트| M_Repo[BaseMongoRepository / UserDictionaryRepository]
         DDS -->|ES API 연동| ES_Repo[ElasticsearchIndicesRepository / CatRepository]
     end
 
-    subgraph 외부 인프라스트럭처 (External Infrastructure)
+    subgraph ext_infra ["외부 인프라스트럭처 (External Infrastructure)"]
         M_Repo -->|Motor 비동기 통신| Mongo[(MongoDB)]
         ES_Repo -->|Elastic 비동기 클라이언트| ES[(Elasticsearch 클러스터)]
         DDS -->|SFTP 개인키 인증| Nodes[대상 ES 노드 서버]
