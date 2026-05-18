@@ -18,6 +18,7 @@ from src.python.elasticsearch.application.repository.mongodb.entities.decompound
 from src.python.elasticsearch.application.repository.mongodb.entities.synonym_dictionary_entity import SynonymDictionaryEntity
 from src.python.elasticsearch.application.repository.mongodb.entities.correction_dictionary_entity import CorrectionDictionaryEntity
 from src.python.elasticsearch.application.repository.mongodb.entities.stopword_dictionary_entity import StopwordDictionaryEntity
+from src.python.elasticsearch.common.enums.dictionary_status import DictionaryStatus
 
 
 class UserDictionaryService:
@@ -36,6 +37,8 @@ class UserDictionaryService:
 
     async def update(self, word: str, req: UserDictionaryUpdateReq):
         update_data = req.model_dump(exclude_unset=True)
+        if "status" not in update_data:
+            update_data["status"] = DictionaryStatus.DRAFT
         return await self.repo.update(word, update_data)
 
     async def delete(self, word: str):
@@ -58,6 +61,8 @@ class DecompoundDictionaryService:
 
     async def update(self, compound_word: str, req: DecompoundDictionaryUpdateReq):
         update_data = req.model_dump(exclude_unset=True)
+        if "status" not in update_data:
+            update_data["status"] = DictionaryStatus.DRAFT
         return await self.repo.update(compound_word, update_data)
 
     async def delete(self, compound_word: str):
@@ -83,6 +88,8 @@ class SynonymDictionaryService:
 
     async def update(self, synonyms: list, req: SynonymDictionaryUpdateReq):
         update_data = req.model_dump(exclude_unset=True)
+        if "status" not in update_data:
+            update_data["status"] = DictionaryStatus.DRAFT
         return await self.repo.update(synonyms, update_data)
 
     async def delete(self, synonyms: list):
@@ -105,6 +112,8 @@ class CorrectionDictionaryService:
 
     async def update(self, incorrect: str, req: CorrectionDictionaryUpdateReq):
         update_data = req.model_dump(exclude_unset=True)
+        if "status" not in update_data:
+            update_data["status"] = DictionaryStatus.DRAFT
         return await self.repo.update(incorrect, update_data)
 
     async def delete(self, incorrect: str):
@@ -127,6 +136,8 @@ class StopwordDictionaryService:
 
     async def update(self, word: str, req: StopwordDictionaryUpdateReq):
         update_data = req.model_dump(exclude_unset=True)
+        if "status" not in update_data:
+            update_data["status"] = DictionaryStatus.DRAFT
         return await self.repo.update(word, update_data)
 
     async def delete(self, word: str):
