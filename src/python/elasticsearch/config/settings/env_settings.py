@@ -41,6 +41,10 @@ class Settings(BaseSettings):
     ES_MAX_CONNECTION: int = 100
     ES_TIMEOUT: int = 30
 
+    # SSH/SFTP Settings for Dictionary Deployment
+    SSH_DICTIONARY_DIR: str = ""
+    SSH_SERVERS: str = ""
+
     class Config:
         env_file_encoding = "utf-8"
         env_file = "src/resources/.env"
@@ -80,6 +84,32 @@ class Settings(BaseSettings):
         # 쉼표 기준으로 분리 + 양쪽 공백 제거 + 빈 값 제거
         hosts = [h.strip() for h in hosts_str.split(",") if h.strip()]
         return hosts
+
+    @property
+    def GET_SSH_SERVERS(self) -> list[dict]:
+        """
+        Parses the JSON list of SSH servers.
+        """
+        import json
+        if not self.SSH_SERVERS.strip():
+            return []
+        try:
+            servers = json.loads(self.SSH_SERVERS)
+            if isinstance(servers, list):
+                normalized = []
+                for s in servers:
+                    normalized.append({
+                        "host": s.get("host") or s.get("ip"),
+                        "port": s.get("port") or 22,
+                        "username": s.get("username"),
+                        "password": s.get("password"),
+                        "key_path": s.get("key_path")
+                    })
+                return normalized
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"Failed to parse SSH_SERVERS JSON: {e}")
+        return []
 
 # 환경 변수 인스턴스 생성
 settings = Settings()

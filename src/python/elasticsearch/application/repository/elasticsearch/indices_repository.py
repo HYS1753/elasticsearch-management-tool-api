@@ -268,6 +268,74 @@ class ElasticsearchIndicesRepository:
                 message=f"{func_name} error: {e}",
             )
 
+    async def exists_index_template(self, name: str) -> bool:
+        try:
+            return await self.es_client.indices.exists_index_template(name=name)
+        except Exception as e:
+            func_name = inspect.currentframe().f_code.co_name
+            raise BizException(
+                status_code=HTTP_500_INTERNAL_SERVER_ERROR,
+                message=f"{func_name} error: {e}",
+            )
+
+    async def put_index_template(self, name: str, index_patterns: list, template: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            return await self.es_client.indices.put_index_template(
+                name=name,
+                index_patterns=index_patterns,
+                template=template
+            )
+        except Exception as e:
+            func_name = inspect.currentframe().f_code.co_name
+            raise BizException(
+                status_code=HTTP_500_INTERNAL_SERVER_ERROR,
+                message=f"{func_name} error: {e}",
+            )
+
+    async def exists_index(self, index_name: str) -> bool:
+        try:
+            return await self.es_client.indices.exists(index=index_name)
+        except Exception as e:
+            func_name = inspect.currentframe().f_code.co_name
+            raise BizException(
+                status_code=HTTP_500_INTERNAL_SERVER_ERROR,
+                message=f"{func_name} error: {e}",
+            )
+
+    async def create_index(self, index_name: str, body: Dict[str, Any] = None) -> Dict[str, Any]:
+        try:
+            return await self.es_client.indices.create(index=index_name, body=body)
+        except Exception as e:
+            func_name = inspect.currentframe().f_code.co_name
+            raise BizException(
+                status_code=HTTP_500_INTERNAL_SERVER_ERROR,
+                message=f"{func_name} error: {e}",
+            )
+
+    async def analyze_text(self, index_name: str, analyzer: str, text: str) -> Dict[str, Any]:
+        try:
+            return await self.es_client.indices.analyze(
+                index=index_name,
+                analyzer=analyzer,
+                text=text
+            )
+        except Exception as e:
+            func_name = inspect.currentframe().f_code.co_name
+            raise BizException(
+                status_code=HTTP_500_INTERNAL_SERVER_ERROR,
+                message=f"{func_name} error: {e}",
+            )
+
+    async def delete_index_safe(self, index_name: str) -> Dict[str, Any]:
+        try:
+            return await self.es_client.indices.delete(index=index_name, ignore_unavailable=True)
+        except Exception as e:
+            func_name = inspect.currentframe().f_code.co_name
+            raise BizException(
+                status_code=HTTP_500_INTERNAL_SERVER_ERROR,
+                message=f"{func_name} error: {e}",
+            )
+
     @staticmethod
     def stringify_json(value: Any) -> str:
         if value is None:

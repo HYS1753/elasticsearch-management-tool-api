@@ -52,6 +52,59 @@ async def get_current_user(
         updated_at_kst=user.updated_at_kst
     )
 
+async def get_current_user_sse(
+    request: Request,
+    token: str = None,
+    auth_service: AuthService = Depends(get_auth_service)
+) -> UserResponse:
+    # Try query param 'token' first
+    token = token or request.query_params.get("token")
+    if not token:
+        # Fallback to Authorization header if present
+        auth_header = request.headers.get("Authorization")
+        if auth_header and auth_header.startswith("Bearer "):
+            token = auth_header.split(" ")[1]
+            
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token missing or invalid",
+        )
+        
+    payload = auth_service.decode_token(token)
+    if payload is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authentication credentials",
+        )
+    
+    user_id = payload.get("sub")
+    if user_id is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
+
+    repo = auth_service.user_repository
+    user = await repo.find_by_user_id(user_id)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+
+    return UserResponse(
+        user_id=user.user_id,
+        name=user.name,
+        role=user.role,
+        created_at_kst=user.created_at_kst,
+        updated_at_kst=user.updated_at_kst
+    )
+
+async def require_admin_sse(
+    current_user: UserResponse = Depends(get_current_user_sse)
+) -> UserResponse:
+    if current_user.role != UserRole.ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only ADMIN can access this stream"
+        )
+    return current_user
+
 # ==========================================
 # Login
 # ==========================================

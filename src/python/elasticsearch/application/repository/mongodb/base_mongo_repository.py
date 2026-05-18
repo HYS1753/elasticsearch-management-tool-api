@@ -83,3 +83,25 @@ class BaseMongoRepository(Generic[T]):
             {"$set": update_data}
         )
         return result.modified_count > 0
+
+    async def get_by_status(self, status: str) -> List[T]:
+        cursor = self.collection.find({"delete_yn": "N", "status": status})
+        docs = await cursor.to_list(length=None)
+        return [self.model(**doc) for doc in docs]
+
+    async def update_status(self, key_value: Any, status: str, applied_at: Any = None, applied_at_kst: str = None) -> bool:
+        update_data = {
+            "status": status,
+            "updated_at": get_now_utc(),
+            "updated_at_kst": get_now_kst_str()
+        }
+        if applied_at:
+            update_data["applied_at"] = applied_at
+        if applied_at_kst:
+            update_data["applied_at_kst"] = applied_at_kst
+            
+        result = await self.collection.update_one(
+            {self.key_field: key_value, "delete_yn": "N"},
+            {"$set": update_data}
+        )
+        return result.modified_count > 0

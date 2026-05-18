@@ -77,3 +77,20 @@ class ElasticsearchCatRepository:
         except Exception as e:
             func_name = inspect.currentframe().f_code.co_name
             raise BizException(status_code=HTTP_500_INTERNAL_SERVER_ERROR, message=f"{func_name} entity unknown error: {e}")
+
+    async def get_cluster_node_ips(self) -> list[str]:
+        """ Retrieves the list of active cluster server IPs via _cat/nodes """
+        try:
+            nodes_info = await self.es_client.cat.nodes(format="json", h="ip,port,name,node.role")
+            ips = []
+            for node in nodes_info:
+                ip = node.get("ip")
+                if ip:
+                    ips.append(ip)
+            return sorted(list(set(ips)))
+        except Exception as e:
+            func_name = inspect.currentframe().f_code.co_name
+            raise BizException(
+                status_code=HTTP_500_INTERNAL_SERVER_ERROR,
+                message=f"{func_name} unknown error: {e}"
+            )

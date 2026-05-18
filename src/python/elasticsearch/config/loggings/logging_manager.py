@@ -73,6 +73,12 @@ LOGGING_CONFIG = {
 # ✅ 전역적으로 로깅 설정 적용 (FastAPI 실행 전)
 logging.config.dictConfig(LOGGING_CONFIG)
 
+# ✅ 전역적으로 사용자 지정 로깅 레벨 설정
+logging.getLogger("pymongo.topology").setLevel(logging.WARNING)
+logging.getLogger("pymongo.connection").setLevel(logging.WARNING)
+logging.getLogger("pymongo.command").setLevel(logging.WARNING)
+logging.getLogger("pymongo.serverSelection").setLevel(logging.WARNING)
+
 # ✅ 로깅 테스트 메시지
 logger = logging.getLogger(__name__)
 logger.info("🚀 Item Search Agent Logging is configured successfully!")

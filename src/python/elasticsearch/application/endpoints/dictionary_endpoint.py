@@ -228,3 +228,72 @@ async def delete_stopword_dict(request: Request, word: str, _=Depends(require_ro
     db = get_mongodb_database(request.app)
     svc = StopwordDictionaryService(db)
     return await svc.delete(word)
+
+
+# ==========================================
+# Deploy & Validate Endpoints (ADMIN ONLY)
+# ==========================================
+from src.python.elasticsearch.config.connections.elasticsearch_connection_manager import get_elasticsearch_client
+from src.python.elasticsearch.application.services.api.dictionary_deploy_service import DictionaryDeployService
+from src.python.elasticsearch.application.schemas.responses.common.common_res import CommonRes
+
+@dictionary_endpoint.post("/validate", response_model=CommonRes)
+async def validate_dictionaries(request: Request, _=Depends(require_role(UserRole.ADMIN))):
+    db = get_mongodb_database(request.app)
+    es_client = get_elasticsearch_client(request.app)
+    svc = DictionaryDeployService(db, es_client)
+    res = await svc.validate_dictionaries()
+    return CommonRes(data=res)
+
+@dictionary_endpoint.post("/publish", response_model=CommonRes)
+async def publish_dictionaries(request: Request, _=Depends(require_role(UserRole.ADMIN))):
+    db = get_mongodb_database(request.app)
+    es_client = get_elasticsearch_client(request.app)
+    svc = DictionaryDeployService(db, es_client)
+    res = await svc.publish_dictionaries()
+    return CommonRes(data=res)
+
+
+import json
+from fastapi.responses import StreamingResponse
+from src.python.elasticsearch.application.endpoints.auth_endpoint import require_admin_sse
+
+@dictionary_endpoint.get("/validate/stream")
+async def stream_validate_dictionaries(
+    request: Request,
+    current_user=Depends(require_admin_sse)
+):
+    db = get_mongodb_database(request.app)
+    es_client = get_elasticsearch_client(request.app)
+    svc = DictionaryDeployService(db, es_client)
+
+    async def event_generator():
+        try:
+            async for step in svc.validate_dictionaries_generator():
+                yield f"data: {json.dumps(step, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            logger.exception("Error in validation stream")
+            err_msg = str(e.detail) if hasattr(e, "detail") else str(e)
+            yield f"data: {json.dumps({'step': 'ERROR', 'message': err_msg, 'status': 'FAILED'}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+@dictionary_endpoint.get("/publish/stream")
+async def stream_publish_dictionaries(
+    request: Request,
+    current_user=Depends(require_admin_sse)
+):
+    db = get_mongodb_database(request.app)
+    es_client = get_elasticsearch_client(request.app)
+    svc = DictionaryDeployService(db, es_client)
+
+    async def event_generator():
+        try:
+            async for step in svc.publish_dictionaries_generator():
+                yield f"data: {json.dumps(step, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            logger.exception("Error in publishing stream")
+            err_msg = str(e.detail) if hasattr(e, "detail") else str(e)
+            yield f"data: {json.dumps({'step': 'ERROR', 'message': err_msg, 'status': 'FAILED'}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
