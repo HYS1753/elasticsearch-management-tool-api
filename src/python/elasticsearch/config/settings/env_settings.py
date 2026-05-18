@@ -91,10 +91,18 @@ class Settings(BaseSettings):
         Parses the JSON list of SSH servers.
         """
         import json
-        if not self.SSH_SERVERS.strip():
+        servers_str = self.SSH_SERVERS.strip()
+        if not servers_str:
             return []
+
+        # Remove surrounding single (') or double (") quotes safely if present
+        if (servers_str.startswith("'") and servers_str.endswith("'")) or (
+            servers_str.startswith('"') and servers_str.endswith('"')
+        ):
+            servers_str = servers_str[1:-1].strip()
+
         try:
-            servers = json.loads(self.SSH_SERVERS)
+            servers = json.loads(servers_str)
             if isinstance(servers, list):
                 normalized = []
                 for s in servers:
