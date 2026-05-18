@@ -16,17 +16,38 @@
 ```mermaid
 graph TD
     UI[Management UI] -->|HTTP 요청| API[FastAPI 엔드포인트]
-    API -->|서비스 주입| DDS[DictionaryDeployService]
     
+    API -->|인증 및 권한 위임| AuthS[AuthService]
+    API -->|사전 CRUD 비즈니스| DictS[DictionaryService]
+    API -->|사전 검증 및 SSH 배포| DeployS[DictionaryDeployService]
+    API -->|클러스터 모니터링| ClusterS[ClusterService]
+    API -->|인덱스 제어 및 샤드 배치| IndexS[IndicesService]
+    API -->|문서 검색 및 스코어 분석| DocS[DocumentsService / SearchExplainService]
+
     subgraph rep_layer ["리포지토리 레이어 (Repository Layer)"]
-        DDS -->|상태 조회 및 업데이트| M_Repo[BaseMongoRepository / UserDictionaryRepository]
-        DDS -->|ES API 연동| ES_Repo[ElasticsearchIndicesRepository / CatRepository]
+        AuthS --> UserRepo[UserRepository]
+        DictS --> DictRepos[DictionaryRepositories<br/>'User/Decomp/Synonym/Correct/Stop']
+        
+        DeployS --> DictRepos
+        DeployS --> CatRepo[CatRepository]
+        DeployS --> IndicesRepo[IndicesRepository]
+        
+        ClusterS --> ClusterRepo[ClusterRepository / NodesRepository]
+        IndexS --> IndicesRepo
+        IndexS --> CatRepo
+        DocS --> DocRepo[DocumentsRepository / ExplainRepository]
     end
 
     subgraph ext_infra ["외부 인프라스트럭처 (External Infrastructure)"]
-        M_Repo -->|Motor 비동기 통신| Mongo[(MongoDB)]
-        ES_Repo -->|Elastic 비동기 클라이언트| ES[(Elasticsearch 클러스터)]
-        DDS -->|SFTP 개인키 인증| Nodes[대상 ES 노드 서버]
+        UserRepo -->|Motor 비동기 통신| Mongo[(MongoDB)]
+        DictRepos -->|Motor 비동기 통신| Mongo
+        
+        CatRepo -->|Elastic 비동기 클라이언트| ES[(Elasticsearch 클러스터)]
+        IndicesRepo -->|Elastic 비동기 클라이언트| ES
+        ClusterRepo -->|Elastic 비동기 클라이언트| ES
+        DocRepo -->|Elastic 비동기 클라이언트| ES
+        
+        DeployS -->|SFTP 개인키 인증 배포| Nodes[원격 ES 노드 서버들]
     end
 ```
 
