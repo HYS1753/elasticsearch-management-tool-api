@@ -417,10 +417,10 @@ class DictionaryDeployService:
         synonym_content = "\n".join(synonym_lines) + "\n"
         stop_content = "\n".join(stop_lines) + "\n"
 
-        # KST Timestamp for backup
+        # KST Timestamp for backup (including seconds to handle quick consecutive clicks)
         kst_tz = timezone(timedelta(hours=9))
         now_kst = datetime.now(kst_tz)
-        timestamp = now_kst.strftime("%Y%m%d_%H%M")
+        timestamp = now_kst.strftime("%Y%m%d_%H%M%S")
 
         # 3. Publish to all node servers
         logger.info(f"Publishing dictionary files to nodes: {[s.get('host') for s in servers]}")
@@ -779,10 +779,10 @@ class DictionaryDeployService:
         now_utc = get_now_utc()
         now_kst = get_now_kst_str()
         
-        # Format a timestamp for backup file naming (YYYYMMDD_HHMM)
+        # Format a timestamp for backup file naming (YYYYMMDD_HHMMSS including seconds)
         kst_tz = timezone(timedelta(hours=9))
         now_kst_dt = datetime.now(kst_tz)
-        timestamp = now_kst_dt.strftime("%Y%m%d_%H%M")
+        timestamp = now_kst_dt.strftime("%Y%m%d_%H%M%S")
         
         yield {"step": "PREPROCESS", "message": "배포 파일 데이터 가공 성공", "status": "SUCCESS"}
 
