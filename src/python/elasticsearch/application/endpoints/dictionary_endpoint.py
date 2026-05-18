@@ -1,3 +1,4 @@
+import logging
 from fastapi import APIRouter, Depends, Request, HTTPException, status
 from src.python.elasticsearch.config.connections.mongodb_connection_manager import get_mongodb_database
 from src.python.elasticsearch.application.services.api.dictionary_service import (
@@ -18,6 +19,7 @@ from src.python.elasticsearch.common.enums.user_role import UserRole
 from src.python.elasticsearch.common.enums.dictionary_status import DictionaryStatus
 
 dictionary_endpoint = APIRouter()
+logger = logging.getLogger(__name__)
 
 # ==========================================
 # User Dictionary Endpoints
@@ -275,6 +277,8 @@ async def stream_validate_dictionaries(
             logger.exception("Error in validation stream")
             err_msg = str(e.detail) if hasattr(e, "detail") else str(e)
             yield f"data: {json.dumps({'step': 'ERROR', 'message': err_msg, 'status': 'FAILED'}, ensure_ascii=False)}\n\n"
+        finally:
+            yield "data: [DONE]\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
@@ -295,5 +299,7 @@ async def stream_publish_dictionaries(
             logger.exception("Error in publishing stream")
             err_msg = str(e.detail) if hasattr(e, "detail") else str(e)
             yield f"data: {json.dumps({'step': 'ERROR', 'message': err_msg, 'status': 'FAILED'}, ensure_ascii=False)}\n\n"
+        finally:
+            yield "data: [DONE]\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
