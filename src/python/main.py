@@ -22,6 +22,7 @@ from src.python.elasticsearch.config.exceptions.exception_handlers import (
 )
 from src.python.elasticsearch.config.exceptions.biz_exceptions import BizException
 from src.python.elasticsearch.application.endpoints.cluster_endpoint import cluster_endpoint
+from src.python.elasticsearch.application.endpoints.metrics_endpoint import metrics_endpoint
 from src.python.elasticsearch.config.connections.mongodb_connection_manager import init_mongodb_connection, close_mongodb_connection
 from src.python.elasticsearch.application.endpoints.dictionary_endpoint import dictionary_endpoint
 from src.python.elasticsearch.application.endpoints.auth_endpoint import auth_endpoint
@@ -96,6 +97,7 @@ app.include_router(search_explain_endpoint, prefix="/app/search/explain", tags=[
 app.include_router(documents_endpoint, prefix="/app/documents", tags=["documents"])
 app.include_router(dictionary_endpoint, prefix="/app/dictionaries", tags=["Dictionary Management API"])
 app.include_router(auth_endpoint, prefix="/app/auth", tags=["Auth API"])
+app.include_router(metrics_endpoint, prefix="/app/metrics", tags=["Elasticsearch Metrics API"])
 
 if __name__ == "__main__":
     try:

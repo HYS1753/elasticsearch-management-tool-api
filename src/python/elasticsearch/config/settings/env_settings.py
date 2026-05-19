@@ -45,6 +45,9 @@ class Settings(BaseSettings):
     SSH_DICTIONARY_DIR: str = ""
     SSH_SERVERS: str = ""
 
+    # Prometheus
+    PROMETHEUS_URL: str = "http://localhost:9090"
+
     class Config:
         env_file_encoding = "utf-8"
         env_file = "src/resources/.env"
