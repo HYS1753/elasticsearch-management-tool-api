@@ -2,6 +2,7 @@ import logging
 import time
 from typing import Optional
 
+import aiohttp
 from src.python.elasticsearch.application.repository.prometheus.prometheus_repository import PrometheusRepository
 from src.python.elasticsearch.application.schemas.responses.metrics.metrics_response import (
     MetricPoint,
@@ -97,8 +98,8 @@ def _sum_instant_values(results: list[dict], metric_name: str) -> float:
 class MetricsService:
     """Prometheus 메트릭 조회 비즈니스 로직."""
 
-    def __init__(self, prometheus_repo: Optional[PrometheusRepository] = None):
-        self.prom = prometheus_repo or PrometheusRepository()
+    def __init__(self, session: aiohttp.ClientSession):
+        self.prom = PrometheusRepository(session=session)
 
     async def get_cluster_overview(self, env: Optional[str] = None) -> ClusterOverviewResponse:
         """클러스터 헬스 + 노드/샤드/문서 요약 (instant query)."""

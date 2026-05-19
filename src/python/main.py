@@ -24,6 +24,9 @@ from src.python.elasticsearch.config.exceptions.biz_exceptions import BizExcepti
 from src.python.elasticsearch.application.endpoints.cluster_endpoint import cluster_endpoint
 from src.python.elasticsearch.application.endpoints.metrics_endpoint import metrics_endpoint
 from src.python.elasticsearch.config.connections.mongodb_connection_manager import init_mongodb_connection, close_mongodb_connection
+from src.python.elasticsearch.config.connections.prometheus_connection_manager import (
+    init_prometheus_connection, start_prometheus_connection, close_prometheus_connection
+)
 from src.python.elasticsearch.application.endpoints.dictionary_endpoint import dictionary_endpoint
 from src.python.elasticsearch.application.endpoints.auth_endpoint import auth_endpoint
 from src.python.elasticsearch.application.services.api.auth_service import AuthService
@@ -45,6 +48,8 @@ async def lifespan(app: FastAPI):
         # Connection 초기화
         init_elasticsearch_connection(app)
         init_mongodb_connection(app)
+        init_prometheus_connection(app)
+        await start_prometheus_connection(app)
 
         # Initialize default admin if no users exist
         auth_service = AuthService(UserRepository(app.state.mongo_connection_manager))
@@ -61,6 +66,7 @@ async def lifespan(app: FastAPI):
         logger.info(f"{settings.APPLICATION_NAME} Application shutdown start")
         await close_elasticsearch_connection(app=app)
         await close_mongodb_connection(app=app)
+        await close_prometheus_connection(app=app)
         logger.info(f"{settings.APPLICATION_NAME} Application shutdown complete")
         logger.info(f"=========================================================")
 

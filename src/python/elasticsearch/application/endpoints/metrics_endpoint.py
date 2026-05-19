@@ -1,12 +1,13 @@
 import logging
 
 from typing import Optional
-from fastapi import APIRouter, Query, Depends
+from fastapi import APIRouter, Query, Depends, Request
 from starlette.responses import JSONResponse
 from starlette.status import HTTP_500_INTERNAL_SERVER_ERROR, HTTP_200_OK
 
 from src.python.elasticsearch.application.schemas.responses.common.common_res import CommonRes
 from src.python.elasticsearch.application.services.api.metrics_service import MetricsService
+from src.python.elasticsearch.config.connections.prometheus_connection_manager import get_prometheus_session
 from src.python.elasticsearch.application.endpoints.auth_endpoint import get_current_user
 
 logger = logging.getLogger(__name__)
@@ -17,12 +18,14 @@ metrics_endpoint = router
 
 @router.get("/cluster-overview", response_model=CommonRes, status_code=200)
 async def cluster_overview(
+    request: Request,
     env: Optional[str] = Query(None, description="환경 필터 (dev/prod). 미지정 시 APPLICATION_ACTIVE_PROFILE 사용"),
     _=Depends(get_current_user),
 ) -> JSONResponse:
     """클러스터 헬스 요약 (instant)"""
     try:
-        service = MetricsService()
+        session = get_prometheus_session(request.app)
+        service = MetricsService(session=session)
         result = await service.get_cluster_overview(env=env)
         return JSONResponse(
             status_code=HTTP_200_OK,
@@ -42,6 +45,7 @@ async def cluster_overview(
 
 @router.get("/node-resources", response_model=CommonRes, status_code=200)
 async def node_resources(
+    request: Request,
     time_range: str = Query("1h", description="조회 범위 (15m/1h/6h/24h/7d)"),
     step: Optional[str] = Query(None, description="데이터 간격 (예: 30s, 60s). 미지정 시 자동 계산"),
     env: Optional[str] = Query(None),
@@ -49,7 +53,8 @@ async def node_resources(
 ) -> JSONResponse:
     """노드 리소스 시계열 (CPU/Memory/JVM/GC)"""
     try:
-        service = MetricsService()
+        session = get_prometheus_session(request.app)
+        service = MetricsService(session=session)
         result = await service.get_node_resources(env=env, time_range=time_range, step=step)
         return JSONResponse(
             status_code=HTTP_200_OK,
@@ -69,6 +74,7 @@ async def node_resources(
 
 @router.get("/search-performance", response_model=CommonRes, status_code=200)
 async def search_performance(
+    request: Request,
     time_range: str = Query("1h"),
     step: Optional[str] = Query(None),
     env: Optional[str] = Query(None),
@@ -76,7 +82,8 @@ async def search_performance(
 ) -> JSONResponse:
     """검색 성능 시계열 (Query Rate/Latency, Fetch Rate/Latency)"""
     try:
-        service = MetricsService()
+        session = get_prometheus_session(request.app)
+        service = MetricsService(session=session)
         result = await service.get_search_performance(env=env, time_range=time_range, step=step)
         return JSONResponse(
             status_code=HTTP_200_OK,
@@ -96,6 +103,7 @@ async def search_performance(
 
 @router.get("/indexing-performance", response_model=CommonRes, status_code=200)
 async def indexing_performance(
+    request: Request,
     time_range: str = Query("1h"),
     step: Optional[str] = Query(None),
     env: Optional[str] = Query(None),
@@ -103,7 +111,8 @@ async def indexing_performance(
 ) -> JSONResponse:
     """인덱싱 성능 시계열 (Index Rate/Latency, Delete Rate)"""
     try:
-        service = MetricsService()
+        session = get_prometheus_session(request.app)
+        service = MetricsService(session=session)
         result = await service.get_indexing_performance(env=env, time_range=time_range, step=step)
         return JSONResponse(
             status_code=HTTP_200_OK,
@@ -123,6 +132,7 @@ async def indexing_performance(
 
 @router.get("/cache-threadpool", response_model=CommonRes, status_code=200)
 async def cache_threadpool(
+    request: Request,
     time_range: str = Query("1h"),
     step: Optional[str] = Query(None),
     env: Optional[str] = Query(None),
@@ -130,7 +140,8 @@ async def cache_threadpool(
 ) -> JSONResponse:
     """캐시 및 스레드풀 메트릭 시계열"""
     try:
-        service = MetricsService()
+        session = get_prometheus_session(request.app)
+        service = MetricsService(session=session)
         result = await service.get_cache_threadpool(env=env, time_range=time_range, step=step)
         return JSONResponse(
             status_code=HTTP_200_OK,
@@ -150,12 +161,14 @@ async def cache_threadpool(
 
 @router.get("/storage-overview", response_model=CommonRes, status_code=200)
 async def storage_overview(
+    request: Request,
     env: Optional[str] = Query(None),
     _=Depends(get_current_user),
 ) -> JSONResponse:
     """노드별 스토리지 사용률 (instant)"""
     try:
-        service = MetricsService()
+        session = get_prometheus_session(request.app)
+        service = MetricsService(session=session)
         result = await service.get_storage_overview(env=env)
         return JSONResponse(
             status_code=HTTP_200_OK,
