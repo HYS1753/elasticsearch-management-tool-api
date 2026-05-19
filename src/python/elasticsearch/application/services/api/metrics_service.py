@@ -31,11 +31,11 @@ TIME_RANGE_MAP: dict[str, int] = {
 
 # 시간 범위별 자동 step 계산
 STEP_MAP: dict[str, str] = {
-    "15m": "15s",
-    "1h": "30s",
-    "6h": "120s",
-    "24h": "300s",
-    "7d": "1800s",
+    "15m": "15s",   # 60 points
+    "1h": "60s",    # 60 points
+    "6h": "300s",   # 72 points
+    "24h": "1200s", # 72 points
+    "7d": "7200s",  # 84 points
 }
 
 
@@ -45,14 +45,52 @@ def _get_env_filter(env: Optional[str] = None) -> str:
     return f'env="{resolved_env}"'
 
 
-def _resolve_time_params(time_range: str, step: Optional[str] = None) -> tuple[str, str, str]:
-    """time_range 문자열에서 start/end/step을 계산."""
+def _resolve_time_params(
+    time_range: str,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    step: Optional[str] = None,
+) -> tuple[str, str, str]:
+    """time_range 문자열 또는 start/end 파라미터에서 start/end/step을 계산."""
+    if start and end:
+        try:
+            # Unix timestamp
+            s_val = float(start)
+            e_val = float(end)
+        except ValueError:
+            from datetime import datetime
+            try:
+                s_val = datetime.fromisoformat(start.replace("Z", "+00:00")).timestamp()
+                e_val = datetime.fromisoformat(end.replace("Z", "+00:00")).timestamp()
+            except ValueError:
+                s_val = time.time() - 3600
+                e_val = time.time()
+
+        diff = e_val - s_val
+        if step:
+            resolved_step = step
+        else:
+            if diff <= 900:  # 15m
+                resolved_step = "15s"
+            elif diff <= 3600:  # 1h
+                resolved_step = "60s"
+            elif diff <= 21600:  # 6h
+                resolved_step = "300s"
+            elif diff <= 86400:  # 24h
+                resolved_step = "1200s"
+            elif diff <= 604800:  # 7d
+                resolved_step = "7200s"
+            else:
+                resolved_step = "14400s"
+        return start, end, resolved_step
+
+    # 기존 preset 로직
     now = time.time()
     seconds = TIME_RANGE_MAP.get(time_range, 3600)
-    start = str(now - seconds)
-    end = str(now)
+    resolved_start = str(now - seconds)
+    resolved_end = str(now)
     resolved_step = step or STEP_MAP.get(time_range, "60s")
-    return start, end, resolved_step
+    return resolved_start, resolved_end, resolved_step
 
 
 def _parse_instant_results(data: dict) -> list[dict]:
@@ -133,29 +171,30 @@ class MetricsService:
         return ClusterOverviewResponse(health=health)
 
     async def get_node_resources(
-        self, env: Optional[str] = None, time_range: str = "1h", step: Optional[str] = None
+        self, env: Optional[str] = None, time_range: str = "1h",
+        start: Optional[str] = None, end: Optional[str] = None, step: Optional[str] = None
     ) -> NodeResourcesResponse:
         """노드별 CPU/메모리/JVM/GC 시계열."""
         env_filter = _get_env_filter(env)
-        start, end, resolved_step = _resolve_time_params(time_range, step)
+        start_time, end_time, resolved_step = _resolve_time_params(time_range, start, end, step)
 
         cpu_data = await self.prom.query_range(
-            f'elasticsearch_os_cpu_percent{{{env_filter}}}', start, end, resolved_step
+            f'elasticsearch_os_cpu_percent{{{env_filter}}}', start_time, end_time, resolved_step
         )
         mem_data = await self.prom.query_range(
-            f'elasticsearch_os_mem_used_bytes{{{env_filter}}}', start, end, resolved_step
+            f'elasticsearch_os_mem_used_bytes{{{env_filter}}}', start_time, end_time, resolved_step
         )
         jvm_used_data = await self.prom.query_range(
-            f'elasticsearch_jvm_memory_used_bytes{{{env_filter},area="heap"}}', start, end, resolved_step
+            f'elasticsearch_jvm_memory_used_bytes{{{env_filter},area="heap"}}', start_time, end_time, resolved_step
         )
         jvm_max_data = await self.prom.query_range(
-            f'elasticsearch_jvm_memory_max_bytes{{{env_filter},area="heap"}}', start, end, resolved_step
+            f'elasticsearch_jvm_memory_max_bytes{{{env_filter},area="heap"}}', start_time, end_time, resolved_step
         )
         gc_count_data = await self.prom.query_range(
-            f'rate(elasticsearch_jvm_gc_collection_seconds_count{{{env_filter}}}[5m])', start, end, resolved_step
+            f'rate(elasticsearch_jvm_gc_collection_seconds_count{{{env_filter}}}[5m])', start_time, end_time, resolved_step
         )
         gc_time_data = await self.prom.query_range(
-            f'rate(elasticsearch_jvm_gc_collection_seconds_sum{{{env_filter}}}[5m])', start, end, resolved_step
+            f'rate(elasticsearch_jvm_gc_collection_seconds_sum{{{env_filter}}}[5m])', start_time, end_time, resolved_step
         )
 
         return NodeResourcesResponse(
@@ -168,23 +207,24 @@ class MetricsService:
         )
 
     async def get_search_performance(
-        self, env: Optional[str] = None, time_range: str = "1h", step: Optional[str] = None
+        self, env: Optional[str] = None, time_range: str = "1h",
+        start: Optional[str] = None, end: Optional[str] = None, step: Optional[str] = None
     ) -> SearchPerformanceResponse:
         """검색 성능 시계열 (rate 기반)."""
         env_filter = _get_env_filter(env)
-        start, end, resolved_step = _resolve_time_params(time_range, step)
+        start_time, end_time, resolved_step = _resolve_time_params(time_range, start, end, step)
 
         query_rate_data = await self.prom.query_range(
-            f'rate(elasticsearch_indices_search_query_total{{{env_filter}}}[5m])', start, end, resolved_step
+            f'rate(elasticsearch_indices_search_query_total{{{env_filter}}}[5m])', start_time, end_time, resolved_step
         )
         query_time_data = await self.prom.query_range(
-            f'rate(elasticsearch_indices_search_query_time_seconds{{{env_filter}}}[5m])', start, end, resolved_step
+            f'rate(elasticsearch_indices_search_query_time_seconds{{{env_filter}}}[5m])', start_time, end_time, resolved_step
         )
         fetch_rate_data = await self.prom.query_range(
-            f'rate(elasticsearch_indices_search_fetch_total{{{env_filter}}}[5m])', start, end, resolved_step
+            f'rate(elasticsearch_indices_search_fetch_total{{{env_filter}}}[5m])', start_time, end_time, resolved_step
         )
         fetch_time_data = await self.prom.query_range(
-            f'rate(elasticsearch_indices_search_fetch_time_seconds{{{env_filter}}}[5m])', start, end, resolved_step
+            f'rate(elasticsearch_indices_search_fetch_time_seconds{{{env_filter}}}[5m])', start_time, end_time, resolved_step
         )
 
         return SearchPerformanceResponse(
@@ -195,20 +235,21 @@ class MetricsService:
         )
 
     async def get_indexing_performance(
-        self, env: Optional[str] = None, time_range: str = "1h", step: Optional[str] = None
+        self, env: Optional[str] = None, time_range: str = "1h",
+        start: Optional[str] = None, end: Optional[str] = None, step: Optional[str] = None
     ) -> IndexingPerformanceResponse:
         """인덱싱 성능 시계열 (rate 기반)."""
         env_filter = _get_env_filter(env)
-        start, end, resolved_step = _resolve_time_params(time_range, step)
+        start_time, end_time, resolved_step = _resolve_time_params(time_range, start, end, step)
 
         index_rate_data = await self.prom.query_range(
-            f'rate(elasticsearch_indices_indexing_index_total{{{env_filter}}}[5m])', start, end, resolved_step
+            f'rate(elasticsearch_indices_indexing_index_total{{{env_filter}}}[5m])', start_time, end_time, resolved_step
         )
         index_time_data = await self.prom.query_range(
-            f'rate(elasticsearch_indices_indexing_index_time_seconds_total{{{env_filter}}}[5m])', start, end, resolved_step
+            f'rate(elasticsearch_indices_indexing_index_time_seconds_total{{{env_filter}}}[5m])', start_time, end_time, resolved_step
         )
         delete_rate_data = await self.prom.query_range(
-            f'rate(elasticsearch_indices_indexing_delete_total{{{env_filter}}}[5m])', start, end, resolved_step
+            f'rate(elasticsearch_indices_indexing_delete_total{{{env_filter}}}[5m])', start_time, end_time, resolved_step
         )
 
         return IndexingPerformanceResponse(
@@ -218,26 +259,27 @@ class MetricsService:
         )
 
     async def get_cache_threadpool(
-        self, env: Optional[str] = None, time_range: str = "1h", step: Optional[str] = None
+        self, env: Optional[str] = None, time_range: str = "1h",
+        start: Optional[str] = None, end: Optional[str] = None, step: Optional[str] = None
     ) -> CacheThreadPoolResponse:
         """캐시 및 스레드풀 메트릭 시계열."""
         env_filter = _get_env_filter(env)
-        start, end, resolved_step = _resolve_time_params(time_range, step)
+        start_time, end_time, resolved_step = _resolve_time_params(time_range, start, end, step)
 
         cache_size = await self.prom.query_range(
-            f'elasticsearch_indices_query_cache_memory_size_bytes{{{env_filter}}}', start, end, resolved_step
+            f'elasticsearch_indices_query_cache_memory_size_bytes{{{env_filter}}}', start_time, end_time, resolved_step
         )
         cache_evictions = await self.prom.query_range(
-            f'rate(elasticsearch_indices_query_cache_evictions{{{env_filter}}}[5m])', start, end, resolved_step
+            f'rate(elasticsearch_indices_query_cache_evictions{{{env_filter}}}[5m])', start_time, end_time, resolved_step
         )
         tp_active = await self.prom.query_range(
-            f'elasticsearch_thread_pool_active_count{{{env_filter},type=~"search|write|index"}}', start, end, resolved_step
+            f'elasticsearch_thread_pool_active_count{{{env_filter},type=~"search|write|index"}}', start_time, end_time, resolved_step
         )
         tp_rejected = await self.prom.query_range(
-            f'rate(elasticsearch_thread_pool_rejected_count{{{env_filter},type=~"search|write|index"}}[5m])', start, end, resolved_step
+            f'rate(elasticsearch_thread_pool_rejected_count{{{env_filter},type=~"search|write|index"}}[5m])', start_time, end_time, resolved_step
         )
         tp_queue = await self.prom.query_range(
-            f'elasticsearch_thread_pool_queue_count{{{env_filter},type=~"search|write|index"}}', start, end, resolved_step
+            f'elasticsearch_thread_pool_queue_count{{{env_filter},type=~"search|write|index"}}', start_time, end_time, resolved_step
         )
 
         return CacheThreadPoolResponse(

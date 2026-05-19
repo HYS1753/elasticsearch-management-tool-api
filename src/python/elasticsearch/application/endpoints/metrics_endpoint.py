@@ -47,6 +47,8 @@ async def cluster_overview(
 async def node_resources(
     request: Request,
     time_range: str = Query("1h", description="조회 범위 (15m/1h/6h/24h/7d)"),
+    start: Optional[str] = Query(None, description="조회 시작 범위 타임스탬프 또는 ISO 포맷"),
+    end: Optional[str] = Query(None, description="조회 종료 범위 타임스탬프 또는 ISO 포맷"),
     step: Optional[str] = Query(None, description="데이터 간격 (예: 30s, 60s). 미지정 시 자동 계산"),
     env: Optional[str] = Query(None),
     _=Depends(get_current_user),
@@ -55,7 +57,7 @@ async def node_resources(
     try:
         session = get_prometheus_session(request.app)
         service = MetricsService(session=session)
-        result = await service.get_node_resources(env=env, time_range=time_range, step=step)
+        result = await service.get_node_resources(env=env, time_range=time_range, start=start, end=end, step=step)
         return JSONResponse(
             status_code=HTTP_200_OK,
             content=CommonRes(data=result.model_dump(mode="json")).model_dump(),
@@ -76,6 +78,8 @@ async def node_resources(
 async def search_performance(
     request: Request,
     time_range: str = Query("1h"),
+    start: Optional[str] = Query(None),
+    end: Optional[str] = Query(None),
     step: Optional[str] = Query(None),
     env: Optional[str] = Query(None),
     _=Depends(get_current_user),
@@ -84,7 +88,7 @@ async def search_performance(
     try:
         session = get_prometheus_session(request.app)
         service = MetricsService(session=session)
-        result = await service.get_search_performance(env=env, time_range=time_range, step=step)
+        result = await service.get_search_performance(env=env, time_range=time_range, start=start, end=end, step=step)
         return JSONResponse(
             status_code=HTTP_200_OK,
             content=CommonRes(data=result.model_dump(mode="json")).model_dump(),
@@ -105,6 +109,8 @@ async def search_performance(
 async def indexing_performance(
     request: Request,
     time_range: str = Query("1h"),
+    start: Optional[str] = Query(None),
+    end: Optional[str] = Query(None),
     step: Optional[str] = Query(None),
     env: Optional[str] = Query(None),
     _=Depends(get_current_user),
@@ -113,7 +119,7 @@ async def indexing_performance(
     try:
         session = get_prometheus_session(request.app)
         service = MetricsService(session=session)
-        result = await service.get_indexing_performance(env=env, time_range=time_range, step=step)
+        result = await service.get_indexing_performance(env=env, time_range=time_range, start=start, end=end, step=step)
         return JSONResponse(
             status_code=HTTP_200_OK,
             content=CommonRes(data=result.model_dump(mode="json")).model_dump(),
@@ -134,6 +140,8 @@ async def indexing_performance(
 async def cache_threadpool(
     request: Request,
     time_range: str = Query("1h"),
+    start: Optional[str] = Query(None),
+    end: Optional[str] = Query(None),
     step: Optional[str] = Query(None),
     env: Optional[str] = Query(None),
     _=Depends(get_current_user),
@@ -142,7 +150,7 @@ async def cache_threadpool(
     try:
         session = get_prometheus_session(request.app)
         service = MetricsService(session=session)
-        result = await service.get_cache_threadpool(env=env, time_range=time_range, step=step)
+        result = await service.get_cache_threadpool(env=env, time_range=time_range, start=start, end=end, step=step)
         return JSONResponse(
             status_code=HTTP_200_OK,
             content=CommonRes(data=result.model_dump(mode="json")).model_dump(),
