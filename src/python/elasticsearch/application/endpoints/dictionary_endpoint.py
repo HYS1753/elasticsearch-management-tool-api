@@ -25,14 +25,14 @@ logger = logging.getLogger(__name__)
 # User Dictionary Endpoints
 # ==========================================
 @dictionary_endpoint.get("/user/search")
-async def search_user_dict(request: Request, keyword: str = "", skip: int = 0, limit: int = 100, sort_by: str = "index", sort_order: int = -1, _=Depends(get_current_user)):
+async def search_user_dict(request: Request, keyword: str = "", skip: int = 0, limit: int = 100, sort_by: str = "updated_at", sort_order: int = -1, _=Depends(get_current_user)):
     db = get_mongodb_database(request.app)
     svc = UserDictionaryService(db)
     total, items = await svc.get_list(keyword, skip, limit, sort_by, sort_order)
     return DictionaryListRes(total_count=total, items=items)
 
 @dictionary_endpoint.get("/user/admin/search")
-async def admin_search_user_dict(request: Request, keyword: str = "", skip: int = 0, limit: int = 100, sort_by: str = "index", sort_order: int = -1, _=Depends(get_current_user)):
+async def admin_search_user_dict(request: Request, keyword: str = "", skip: int = 0, limit: int = 100, sort_by: str = "updated_at", sort_order: int = -1, _=Depends(get_current_user)):
     db = get_mongodb_database(request.app)
     svc = UserDictionaryService(db)
     total, items = await svc.get_admin_list(keyword, skip, limit, sort_by, sort_order)
@@ -68,14 +68,14 @@ async def delete_user_dict(request: Request, word: str, _=Depends(require_role(U
 # Decompound Dictionary Endpoints
 # ==========================================
 @dictionary_endpoint.get("/decompound/search")
-async def search_decompound_dict(request: Request, keyword: str = "", skip: int = 0, limit: int = 100, sort_by: str = "index", sort_order: int = -1, _=Depends(get_current_user)):
+async def search_decompound_dict(request: Request, keyword: str = "", skip: int = 0, limit: int = 100, sort_by: str = "updated_at", sort_order: int = -1, _=Depends(get_current_user)):
     db = get_mongodb_database(request.app)
     svc = DecompoundDictionaryService(db)
     total, items = await svc.get_list(keyword, skip, limit, sort_by, sort_order)
     return DictionaryListRes(total_count=total, items=items)
 
 @dictionary_endpoint.get("/decompound/admin/search")
-async def admin_search_decompound_dict(request: Request, keyword: str = "", skip: int = 0, limit: int = 100, sort_by: str = "index", sort_order: int = -1, _=Depends(get_current_user)):
+async def admin_search_decompound_dict(request: Request, keyword: str = "", skip: int = 0, limit: int = 100, sort_by: str = "updated_at", sort_order: int = -1, _=Depends(get_current_user)):
     db = get_mongodb_database(request.app)
     svc = DecompoundDictionaryService(db)
     total, items = await svc.get_admin_list(keyword, skip, limit, sort_by, sort_order)
@@ -110,14 +110,14 @@ async def delete_decompound_dict(request: Request, compound_word: str, _=Depends
 # Synonym Dictionary Endpoints
 # ==========================================
 @dictionary_endpoint.get("/synonym/search")
-async def search_synonym_dict(request: Request, keyword: str = "", skip: int = 0, limit: int = 100, sort_by: str = "index", sort_order: int = -1, _=Depends(get_current_user)):
+async def search_synonym_dict(request: Request, keyword: str = "", skip: int = 0, limit: int = 100, sort_by: str = "updated_at", sort_order: int = -1, _=Depends(get_current_user)):
     db = get_mongodb_database(request.app)
     svc = SynonymDictionaryService(db)
     total, items = await svc.get_list(keyword, skip, limit, sort_by, sort_order)
     return DictionaryListRes(total_count=total, items=items)
 
 @dictionary_endpoint.get("/synonym/admin/search")
-async def admin_search_synonym_dict(request: Request, keyword: str = "", skip: int = 0, limit: int = 100, sort_by: str = "index", sort_order: int = -1, _=Depends(get_current_user)):
+async def admin_search_synonym_dict(request: Request, keyword: str = "", skip: int = 0, limit: int = 100, sort_by: str = "updated_at", sort_order: int = -1, _=Depends(get_current_user)):
     db = get_mongodb_database(request.app)
     svc = SynonymDictionaryService(db)
     total, items = await svc.get_admin_list(keyword, skip, limit, sort_by, sort_order)
@@ -152,14 +152,14 @@ async def delete_synonym_dict(request: Request, synonym_first_word: str, _=Depen
 # Correction Dictionary Endpoints
 # ==========================================
 @dictionary_endpoint.get("/correction/search")
-async def search_correction_dict(request: Request, keyword: str = "", skip: int = 0, limit: int = 100, sort_by: str = "index", sort_order: int = -1, _=Depends(get_current_user)):
+async def search_correction_dict(request: Request, keyword: str = "", skip: int = 0, limit: int = 100, sort_by: str = "updated_at", sort_order: int = -1, _=Depends(get_current_user)):
     db = get_mongodb_database(request.app)
     svc = CorrectionDictionaryService(db)
     total, items = await svc.get_list(keyword, skip, limit, sort_by, sort_order)
     return DictionaryListRes(total_count=total, items=items)
 
 @dictionary_endpoint.get("/correction/admin/search")
-async def admin_search_correction_dict(request: Request, keyword: str = "", skip: int = 0, limit: int = 100, sort_by: str = "index", sort_order: int = -1, _=Depends(get_current_user)):
+async def admin_search_correction_dict(request: Request, keyword: str = "", skip: int = 0, limit: int = 100, sort_by: str = "updated_at", sort_order: int = -1, _=Depends(get_current_user)):
     db = get_mongodb_database(request.app)
     svc = CorrectionDictionaryService(db)
     total, items = await svc.get_admin_list(keyword, skip, limit, sort_by, sort_order)
@@ -194,14 +194,14 @@ async def delete_correction_dict(request: Request, incorrect: str, _=Depends(req
 # Stopword Dictionary Endpoints
 # ==========================================
 @dictionary_endpoint.get("/stopword/search")
-async def search_stopword_dict(request: Request, keyword: str = "", skip: int = 0, limit: int = 100, sort_by: str = "index", sort_order: int = -1, _=Depends(get_current_user)):
+async def search_stopword_dict(request: Request, keyword: str = "", skip: int = 0, limit: int = 100, sort_by: str = "updated_at", sort_order: int = -1, _=Depends(get_current_user)):
     db = get_mongodb_database(request.app)
     svc = StopwordDictionaryService(db)
     total, items = await svc.get_list(keyword, skip, limit, sort_by, sort_order)
     return DictionaryListRes(total_count=total, items=items)
 
 @dictionary_endpoint.get("/stopword/admin/search")
-async def admin_search_stopword_dict(request: Request, keyword: str = "", skip: int = 0, limit: int = 100, sort_by: str = "index", sort_order: int = -1, _=Depends(get_current_user)):
+async def admin_search_stopword_dict(request: Request, keyword: str = "", skip: int = 0, limit: int = 100, sort_by: str = "updated_at", sort_order: int = -1, _=Depends(get_current_user)):
     db = get_mongodb_database(request.app)
     svc = StopwordDictionaryService(db)
     total, items = await svc.get_admin_list(keyword, skip, limit, sort_by, sort_order)
