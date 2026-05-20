@@ -9,6 +9,21 @@ from starlette.status import HTTP_404_NOT_FOUND, HTTP_500_INTERNAL_SERVER_ERROR
 from src.python.elasticsearch.config.exceptions.biz_exceptions import BizException
 
 
+def _extract_es_error(e: Exception) -> str:
+    if hasattr(e, "body") and isinstance(e.body, dict) and "error" in e.body:
+        error_info = e.body["error"]
+        reasons = []
+        current = error_info
+        while current and isinstance(current, dict):
+            reason = current.get("reason")
+            if reason:
+                reasons.append(reason)
+            current = current.get("caused_by")
+        if reasons:
+            return " -> ".join(reasons)
+    return str(e)
+
+
 class ElasticsearchIndicesRepository:
     def __init__(self, es_client: AsyncElasticsearch):
         self.es_client = es_client
@@ -36,7 +51,7 @@ class ElasticsearchIndicesRepository:
             func_name = inspect.currentframe().f_code.co_name
             raise BizException(
                 status_code=HTTP_500_INTERNAL_SERVER_ERROR,
-                message=f"{func_name} entity unknown error: {e}",
+                message=f"{func_name} entity unknown error: {_extract_es_error(e)}",
             )
 
     async def get_index_mappings(self, index_name: str) -> Dict[str, Any]:
@@ -58,7 +73,7 @@ class ElasticsearchIndicesRepository:
             func_name = inspect.currentframe().f_code.co_name
             raise BizException(
                 status_code=HTTP_500_INTERNAL_SERVER_ERROR,
-                message=f"{func_name} entity unknown error: {e}",
+                message=f"{func_name} entity unknown error: {_extract_es_error(e)}",
             )
 
     async def get_index_aliases(self, index_name: str) -> Dict[str, Any]:
@@ -80,7 +95,7 @@ class ElasticsearchIndicesRepository:
             func_name = inspect.currentframe().f_code.co_name
             raise BizException(
                 status_code=HTTP_500_INTERNAL_SERVER_ERROR,
-                message=f"{func_name} entity unknown error: {e}",
+                message=f"{func_name} entity unknown error: {_extract_es_error(e)}",
             )
 
     async def get_index_stats(self, index_name: str) -> Dict[str, Any]:
@@ -135,7 +150,7 @@ class ElasticsearchIndicesRepository:
             func_name = inspect.currentframe().f_code.co_name
             raise BizException(
                 status_code=HTTP_500_INTERNAL_SERVER_ERROR,
-                message=f"{func_name} entity unknown error: {e}",
+                message=f"{func_name} entity unknown error: {_extract_es_error(e)}",
             )
         except ValidationError as e:
             func_name = inspect.currentframe().f_code.co_name
@@ -147,7 +162,7 @@ class ElasticsearchIndicesRepository:
             func_name = inspect.currentframe().f_code.co_name
             raise BizException(
                 status_code=HTTP_500_INTERNAL_SERVER_ERROR,
-                message=f"{func_name} entity unknown error: {e}",
+                message=f"{func_name} entity unknown error: {_extract_es_error(e)}",
             )
 
     async def open_index(self, index_name: str) -> Dict[str, Any]:
@@ -162,7 +177,7 @@ class ElasticsearchIndicesRepository:
             func_name = inspect.currentframe().f_code.co_name
             raise BizException(
                 status_code=HTTP_500_INTERNAL_SERVER_ERROR,
-                message=f"{func_name} error: {e}",
+                message=f"{func_name} error: {_extract_es_error(e)}",
             )
 
     async def close_index(self, index_name: str) -> Dict[str, Any]:
@@ -177,7 +192,7 @@ class ElasticsearchIndicesRepository:
             func_name = inspect.currentframe().f_code.co_name
             raise BizException(
                 status_code=HTTP_500_INTERNAL_SERVER_ERROR,
-                message=f"{func_name} error: {e}",
+                message=f"{func_name} error: {_extract_es_error(e)}",
             )
 
     async def update_read_only(self, index_name: str, read_only: bool) -> Dict[str, Any]:
@@ -197,7 +212,7 @@ class ElasticsearchIndicesRepository:
             func_name = inspect.currentframe().f_code.co_name
             raise BizException(
                 status_code=HTTP_500_INTERNAL_SERVER_ERROR,
-                message=f"{func_name} error: {e}",
+                message=f"{func_name} error: {_extract_es_error(e)}",
             )
 
     async def refresh_index(self, index_name: str) -> Dict[str, Any]:
@@ -212,7 +227,7 @@ class ElasticsearchIndicesRepository:
             func_name = inspect.currentframe().f_code.co_name
             raise BizException(
                 status_code=HTTP_500_INTERNAL_SERVER_ERROR,
-                message=f"{func_name} error: {e}",
+                message=f"{func_name} error: {_extract_es_error(e)}",
             )
 
     async def flush_index(self, index_name: str) -> Dict[str, Any]:
@@ -227,7 +242,7 @@ class ElasticsearchIndicesRepository:
             func_name = inspect.currentframe().f_code.co_name
             raise BizException(
                 status_code=HTTP_500_INTERNAL_SERVER_ERROR,
-                message=f"{func_name} error: {e}",
+                message=f"{func_name} error: {_extract_es_error(e)}",
             )
 
     async def forcemerge_index(
@@ -250,7 +265,7 @@ class ElasticsearchIndicesRepository:
             func_name = inspect.currentframe().f_code.co_name
             raise BizException(
                 status_code=HTTP_500_INTERNAL_SERVER_ERROR,
-                message=f"{func_name} error: {e}",
+                message=f"{func_name} error: {_extract_es_error(e)}",
             )
 
     async def delete_index(self, index_name: str) -> Dict[str, Any]:
@@ -265,7 +280,7 @@ class ElasticsearchIndicesRepository:
             func_name = inspect.currentframe().f_code.co_name
             raise BizException(
                 status_code=HTTP_500_INTERNAL_SERVER_ERROR,
-                message=f"{func_name} error: {e}",
+                message=f"{func_name} error: {_extract_es_error(e)}",
             )
 
     async def exists_index_template(self, name: str) -> bool:
@@ -275,7 +290,7 @@ class ElasticsearchIndicesRepository:
             func_name = inspect.currentframe().f_code.co_name
             raise BizException(
                 status_code=HTTP_500_INTERNAL_SERVER_ERROR,
-                message=f"{func_name} error: {e}",
+                message=f"{func_name} error: {_extract_es_error(e)}",
             )
 
     async def put_index_template(self, name: str, index_patterns: list, template: Dict[str, Any]) -> Dict[str, Any]:
@@ -289,7 +304,7 @@ class ElasticsearchIndicesRepository:
             func_name = inspect.currentframe().f_code.co_name
             raise BizException(
                 status_code=HTTP_500_INTERNAL_SERVER_ERROR,
-                message=f"{func_name} error: {e}",
+                message=f"{func_name} error: {_extract_es_error(e)}",
             )
 
     async def exists_index(self, index_name: str) -> bool:
@@ -299,7 +314,7 @@ class ElasticsearchIndicesRepository:
             func_name = inspect.currentframe().f_code.co_name
             raise BizException(
                 status_code=HTTP_500_INTERNAL_SERVER_ERROR,
-                message=f"{func_name} error: {e}",
+                message=f"{func_name} error: {_extract_es_error(e)}",
             )
 
     async def create_index(self, index_name: str, body: Dict[str, Any] = None) -> Dict[str, Any]:
@@ -309,7 +324,7 @@ class ElasticsearchIndicesRepository:
             func_name = inspect.currentframe().f_code.co_name
             raise BizException(
                 status_code=HTTP_500_INTERNAL_SERVER_ERROR,
-                message=f"{func_name} error: {e}",
+                message=f"{func_name} error: {_extract_es_error(e)}",
             )
 
     async def analyze_text(self, index_name: str, analyzer: str, text: str) -> Dict[str, Any]:
@@ -323,7 +338,7 @@ class ElasticsearchIndicesRepository:
             func_name = inspect.currentframe().f_code.co_name
             raise BizException(
                 status_code=HTTP_500_INTERNAL_SERVER_ERROR,
-                message=f"{func_name} error: {e}",
+                message=f"{func_name} error: {_extract_es_error(e)}",
             )
 
     async def delete_index_safe(self, index_name: str) -> Dict[str, Any]:
@@ -333,7 +348,7 @@ class ElasticsearchIndicesRepository:
             func_name = inspect.currentframe().f_code.co_name
             raise BizException(
                 status_code=HTTP_500_INTERNAL_SERVER_ERROR,
-                message=f"{func_name} error: {e}",
+                message=f"{func_name} error: {_extract_es_error(e)}",
             )
 
     @staticmethod
