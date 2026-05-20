@@ -164,7 +164,7 @@ class SynonymDictionaryService:
         return await self.repo.admin_search_deleted_by_keyword(keyword, skip, limit, sort_by, sort_order)
 
     async def create(self, req: SynonymDictionaryCreateReq):
-        existing_doc = await self.repo.collection.find_one({"synonyms": req.synonyms})
+        existing_doc = await self.repo.collection.find_one({"synonyms": { "$all": req.synonyms }})
         
         if existing_doc:
             if existing_doc.get("delete_yn") == "N":

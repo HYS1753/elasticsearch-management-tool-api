@@ -129,8 +129,8 @@ async def create_synonym_dict(request: Request, req: SynonymDictionaryCreateReq,
     svc = SynonymDictionaryService(db)
     return await svc.create(req)
 
-@dictionary_endpoint.put("/synonym/{synonym_first_word}")
-async def update_synonym_dict(request: Request, synonym_first_word: str, req: SynonymDictionaryUpdateReq, current_user=Depends(get_current_user)):
+@dictionary_endpoint.put("/synonym/{synonym_words}")
+async def update_synonym_dict(request: Request, synonym_words: str, req: SynonymDictionaryUpdateReq, current_user=Depends(get_current_user)):
     if req.status is not None and req.status in (DictionaryStatus.APPROVED, DictionaryStatus.REJECTED):
         if current_user.role != UserRole.ADMIN:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only ADMIN can approve or reject dictionary entries")
@@ -139,13 +139,15 @@ async def update_synonym_dict(request: Request, synonym_first_word: str, req: Sy
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="VIEWER cannot modify dictionary entries")
     db = get_mongodb_database(request.app)
     svc = SynonymDictionaryService(db)
-    return await svc.update([synonym_first_word], req)
+    synonym_words_list = synonym_words.split(",")
+    return await svc.update(synonym_words_list, req)
 
-@dictionary_endpoint.delete("/synonym/{synonym_first_word}")
-async def delete_synonym_dict(request: Request, synonym_first_word: str, _=Depends(require_role(UserRole.ADMIN, UserRole.WRITER))):
+@dictionary_endpoint.delete("/synonym/{synonym_words}")
+async def delete_synonym_dict(request: Request, synonym_words: str, _=Depends(require_role(UserRole.ADMIN, UserRole.WRITER))):
     db = get_mongodb_database(request.app)
     svc = SynonymDictionaryService(db)
-    return await svc.delete([synonym_first_word])
+    synonym_words_list = synonym_words.split(",")
+    return await svc.delete(synonym_words_list)
 
 
 # ==========================================
