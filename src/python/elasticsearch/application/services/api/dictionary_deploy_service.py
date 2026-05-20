@@ -758,9 +758,10 @@ class DictionaryDeployService:
                 )
             else:
                 yield {
-                    "step": "VALIDATE_PROGRESS",
+                    "step": f"VAL_{val_step['step']}",
                     "message": f"[선행 검증] {val_step['message']}",
-                    "status": val_step["status"]
+                    "status": val_step["status"],
+                    "details": val_step.get("details")
                 }
 
         # Step 2: Preprocess Dictionaries
