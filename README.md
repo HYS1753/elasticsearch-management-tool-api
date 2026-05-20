@@ -59,15 +59,26 @@ API 구동을 위해 반드시 구성해야 하는 환경 변수 목록입니다
 
 | 분류 | 변수명 (Key) | 기본값 | 설명 |
 | :--- | :--- | :--- | :--- |
-| **애플리케이션** | `APPLICATION_ACTIVE_PROFILE` | `dev` | 활성화할 프로필 형태 (`dev`, `prod`, `local`) |
+| **애플리케이션** | `APPLICATION_ACTIVE_PROFILE` | `dev` | 활성화할 프로필 형태 (`dev`, `stg`, `prod`) |
 | | `APPLICATION_PORT` | `18080` | API 서버가 대기할 포트 번호 |
 | **MongoDB** | `MONGO_URI` | `mongodb://...` | 메타데이터 저장용 MongoDB 연결 URI |
 | | `MONGO_DB_NAME` | `elasticsearch_management` | 사전 스테이징 데이터를 저장할 데이터베이스명 |
 | **Elasticsearch**| `ES_HOST` | `https://...` | 엘라스틱서치 클러스터 노드 목록 (쉼표 구분 형태) |
 | | `ES_API_KEY` | `your-api-key` | 클러스터 제어를 위한 전용 API 키 |
 | | `ES_CERTS` | `path/to/cert.crt` | HTTPS 보안 검증용 SSL 인증서 경로 |
+| **JWT 인증** | `JWT_SECRET_KEY` | _(변경 필요)_ | JWT 토큰 서명 시크릿 키. **운영계 배포 시 반드시 충분히 복잡한 무작위 문자열로 교체해야 합니다.** |
+| | `JWT_ALGORITHM` | `HS256` | JWT 서명 알고리즘 |
+| | `JWT_ACCESS_TOKEN_EXPIRE_HOURS` | `24` | 액세스 토큰 유효 시간 (단위: 시간). UI의 `NEXT_PUBLIC_AUTH_TOKEN_EXPIRE_HOURS`와 반드시 동일하게 맞춰야 합니다. |
 | **SSH/SFTP** | `SSH_DICTIONARY_DIR`| `/etc/elasticsearch/analysis` | 사전 파일(`.txt`)들이 유지 관리되는 원격 디렉토리 경로 |
 | | `SSH_SERVERS` | `'[{"host": "...", "username": "...", "key_path": "..."}]'` | **[필수]** 각 배포 대상 서버의 접속 정보 및 개별 SSH 인증 자격 정보가 기술된 JSON 배열 문자열 |
+
+> [!CAUTION]
+> **운영계(prod) 배포 시 `JWT_SECRET_KEY` 보안 필수 조치:**
+> 기본값 `super-secret-key-for-admin-panel`은 개발용 플레이스홀더입니다. 운영 배포 시에는 반드시 아래와 같이 충분히 복잡한 무작위 시크릿으로 교체하십시오:
+> ```bash
+> # 안전한 랜덤 시크릿 키 생성 예시
+> python3 -c "import secrets; print(secrets.token_hex(32))"
+> ```
 
 > [!TIP]
 > **`SSH_SERVERS` JSON 상세 스키마:**
@@ -149,22 +160,36 @@ API 구동을 위해 반드시 구성해야 하는 환경 변수 목록입니다
 관리자가 수정/가공하는 커스텀 사전 스테이징 요소들은 MongoDB에 정밀 저장된 후, 실제 검색 클러스터 성능에 반영되기 전에 다음과 같은 엄격한 상태 변화를 거칩니다:
 
 ```
-[사전 가공 및 등록] ──> 상태: APPROVED (원격 배포 준비 및 대기 단계)
-                                 │
-                                 ▼
-                     기능: /validate (대상 클러스터 사전 파일 정밀 사전 검증)
-                                 │
-                                 ▼
-                     기능: /publish  (보안 SFTP 전송 및 원격지 영구 보관)
-                                 │
-                                 ▼
-                           상태: APPLIED (원격지 실제 반영 및 클러스터 활성화)
+[신규 등록 또는 소프트 삭제 항목 복원] ──> 상태: DRAFT (초기 임시 저장, 수정 가능)
+                                                │
+                                                ▼ (사용자가 '승인' 처리)
+                                        상태: APPROVED (원격 배포 준비 및 대기 단계)
+                                                │
+                                                ▼
+                                    기능: /validate (대상 클러스터 사전 파일 정밀 검증)
+                                                │
+                                                ▼
+                                    기능: /publish  (보안 SFTP 전송 및 원격지 영구 보관)
+                                                │
+                                                ▼
+                                        상태: APPLIED (원격지 실제 반영 및 클러스터 활성화)
 ```
 
-1.  **사전 스테이징 등록 단계 (APPROVED)**:
-    *   사전 편집자(`WRITER` 또는 `ADMIN`)가 포털에서 사전을 추가, 수정 또는 삭제하면 MongoDB에 해당 데이터의 상태가 `APPROVED`로 기록됩니다.
+> [!NOTE]
+> **소프트 삭제(Soft-delete) 및 복원 로직:**
+> 사전 항목 삭제 시 실제 데이터는 제거되지 않고 `delete_yn = "Y"` 플래그로 논리 삭제됩니다. 이후 동일한 키(단어)로 재등록 시도 시 서비스 레이어에서 아래 분기 처리가 자동으로 수행됩니다:
+> - **활성 상태(`delete_yn = "N"`)** 항목이 이미 존재 → `BizException(400, "이미 등록되어 있는 항목입니다.")` 반환
+> - **소프트 삭제(`delete_yn = "Y"`)** 항목이 존재 → 해당 항목을 복원(`delete_yn = "N"`, `status = DRAFT`)하고 새 등록 대신 업데이트 처리
+
+1.  **사전 초기 등록 단계 (DRAFT)**:
+    *   사전 편집자(`WRITER` 또는 `ADMIN`)가 포털에서 사전 항목을 신규 등록하거나, 소프트 삭제된 항목이 복원될 때 MongoDB에 상태 `DRAFT`로 기록됩니다.
+    *   `DRAFT` 상태는 아직 승인되지 않은 초안 단계를 의미하며, 수정 및 삭제가 자유롭습니다.
+    *   삭제(`delete`) 처리 시에도 상태가 `DRAFT`로 초기화되며 승인 정보가 초기화됩니다.
+2.  **사전 배포 대기 단계 (APPROVED)**:
+    *   `DRAFT` 항목이 사용자에 의해 승인 처리되면 상태가 `APPROVED`로 변경됩니다.
     *   `APPROVED` 상태는 사용자가 수정을 완료하여 승인했으나 아직 원격 검색 엔진 실서버에는 전송/업로드되지 않은 대기 상태를 나타냅니다.
-2.  **검색엔진 배포 완료 단계 (APPLIED)**:
+    *   `/validate` 및 `/publish` 파이프라인의 처리 대상은 `APPROVED` + `APPLIED` 상태의 항목 전체를 합산하여 생성됩니다.
+3.  **검색엔진 배포 완료 단계 (APPLIED)**:
     *   관리자에 의해 배포 프로세스가 정상적으로 최종 완수되면, MongoDB의 사전 데이터 상태가 일괄적으로 `APPLIED`로 전환되며, 배포 완료 이력 UTC/KST 타임스탬프가 함께 기록됩니다.
 
 ---
