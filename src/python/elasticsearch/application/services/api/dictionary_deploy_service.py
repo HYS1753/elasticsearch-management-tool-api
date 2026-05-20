@@ -90,8 +90,8 @@ class DictionaryDeployService:
                     compound = self._get_field(doc, "compound_word")
                     components = self._get_field(doc, "components") or []
                     if compound and str(compound).strip() and components:
-                        joined = ",".join(str(c).strip() for c in components if str(c).strip())
-                        noun_lines.append(f"{str(compound).strip()},{joined}")
+                        joined = " ".join(str(c).strip() for c in components if str(c).strip())
+                        noun_lines.append(f"{str(compound).strip()} {joined}")
             
             elif col_name == "synonym_dictionary":
                 for doc in all_docs:

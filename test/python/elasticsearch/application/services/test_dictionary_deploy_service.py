@@ -91,7 +91,7 @@ class TestDictionaryDeployServiceUnit:
         # Check nouns (user_dictionary + decompound_dictionary)
         assert "사용자사전1" in noun_lines
         assert "사용자사전2" in noun_lines
-        assert "고속도로,고속,도로" in noun_lines
+        assert "고속도로 고속 도로" in noun_lines
         assert len(noun_lines) == 3 # Deduplicated "사용자사전1"
 
         # Check synonyms (synonym_dictionary + correction_dictionary)
