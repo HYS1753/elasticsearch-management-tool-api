@@ -61,12 +61,6 @@ class UserRepository:
     async def create(self, entity: UserEntity) -> UserEntity:
         try:
             collection = self.get_collection()
-            
-            # check if exists
-            existing = await collection.find_one({"user_id": entity.user_id})
-            if existing:
-                raise ValueError(f"User with user_id {entity.user_id} already exists")
-
             doc = entity.model_dump()
             await collection.insert_one(doc)
             return entity

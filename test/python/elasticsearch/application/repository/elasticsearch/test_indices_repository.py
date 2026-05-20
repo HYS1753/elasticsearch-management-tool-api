@@ -5,6 +5,7 @@ Tests for ElasticsearchIndicesRepository
 통합 테스트: 실제 ES 연결 사용
 """
 import pytest
+from elastic_transport import ObjectApiResponse
 from src.python.elasticsearch.application.repository.elasticsearch.entities.cat_indices_entity import IndicesEntity, IndexEntity
 from src.python.elasticsearch.application.repository.elasticsearch.indices_repository import \
     ElasticsearchIndicesRepository
@@ -20,7 +21,7 @@ class TestIndicesRepositoryUnit:
     """Unit tests with mock ES client"""
 
     async def test_get_index_settings(self):
-        """Test get_indices_info"""
+        """Test get_index_settings"""
         mock_client = TestEsClientFactory.create_mock_client()
         mock_client.indices.get_settings.return_value = {
             "test": {"settings": {}}
@@ -31,10 +32,10 @@ class TestIndicesRepositoryUnit:
         result = await repo.get_index_settings(index_name=test_index_name)
 
         assert isinstance(result, dict)
-        assert "settings" in result.keys()
+        assert "settings" in result[test_index_name]
 
     async def test_get_index_mapping(self):
-        """Test get_index_info"""
+        """Test get_index_mappings"""
         mock_client = TestEsClientFactory.create_mock_client()
         mock_client.indices.get_mapping.return_value = {
             "test": {"mappings": {}}
@@ -42,10 +43,10 @@ class TestIndicesRepositoryUnit:
         repo = ElasticsearchIndicesRepository(mock_client)
 
         test_index_name = "test"
-        result = await repo.get_index_mapping(index_name=test_index_name)
+        result = await repo.get_index_mappings(index_name=test_index_name)
 
         assert isinstance(result, dict)
-        assert "mappings" in result.keys()
+        assert "mappings" in result[test_index_name]
 
 
 # ============================================
@@ -66,10 +67,10 @@ class TestCatRepositoryIntegration:
 
             test_index_name = "test"
             repo = ElasticsearchIndicesRepository(real_client)
-            result: dict = await repo.get_index_settings(index_name=test_index_name)
+            result = await repo.get_index_settings(index_name=test_index_name)
 
-            assert isinstance(result, dict)
-            assert "settings" in result.keys()
+            assert isinstance(result, (dict, ObjectApiResponse))
+            assert "settings" in result[test_index_name]
         finally:
             await real_client.close()
 
@@ -83,10 +84,10 @@ class TestCatRepositoryIntegration:
 
             test_index_name = "test"
             repo = ElasticsearchIndicesRepository(real_client)
-            result = await repo.get_index_mapping(index_name=test_index_name)
+            result = await repo.get_index_mappings(index_name=test_index_name)
 
-            assert isinstance(result, dict)
-            assert "mappings" in result.keys()
+            assert isinstance(result, (dict, ObjectApiResponse))
+            assert "mappings" in result[test_index_name]
         finally:
             await real_client.close()
 

@@ -20,6 +20,10 @@ from src.python.elasticsearch.application.repository.mongodb.entities.correction
 from src.python.elasticsearch.application.repository.mongodb.entities.stopword_dictionary_entity import StopwordDictionaryEntity
 from src.python.elasticsearch.common.enums.dictionary_status import DictionaryStatus
 
+from src.python.elasticsearch.application.repository.mongodb.entities.dictionary_base_entity import get_now_utc, get_now_kst_str
+from src.python.elasticsearch.config.exceptions.biz_exceptions import BizException
+from fastapi import status
+
 
 class UserDictionaryService:
     def __init__(self, db: AsyncIOMotorDatabase):
@@ -32,6 +36,34 @@ class UserDictionaryService:
         return await self.repo.admin_search_deleted_by_keyword(keyword, skip, limit, sort_by, sort_order)
 
     async def create(self, req: UserDictionaryCreateReq):
+        # 1. key_field를 기준으로 데이터가 이미 존재하는지 조회 (delete_yn 필터 없이)
+        existing_doc = await self.repo.collection.find_one({"word": req.word})
+        
+        if existing_doc:
+            # delete_yn == "N" 이면 이미 존재하는 항목 에러
+            if existing_doc.get("delete_yn") == "N":
+                raise BizException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    message="이미 등록되어 있는 항목입니다."
+                )
+            # delete_yn == "Y" 이면 복구
+            else:
+                entity = UserDictionaryEntity(**req.model_dump())
+                entity.index = existing_doc.get("index", 1)
+                entity.delete_yn = "N"
+                entity.status = DictionaryStatus.DRAFT
+                entity.approver = None
+                entity.applied_at = None
+                entity.applied_at_kst = None
+                entity.updated_at = get_now_utc()
+                entity.updated_at_kst = get_now_kst_str()
+                
+                await self.repo.collection.replace_one(
+                    {"_id": existing_doc["_id"]},
+                    entity.model_dump()
+                )
+                return entity
+
         entity = UserDictionaryEntity(**req.model_dump())
         return await self.repo.create(entity)
 
@@ -42,7 +74,21 @@ class UserDictionaryService:
         return await self.repo.update(word, update_data)
 
     async def delete(self, word: str):
-        return await self.repo.delete(word)
+        # Soft delete & Reset status/approval info
+        update_data = {
+            "delete_yn": "Y",
+            "status": DictionaryStatus.DRAFT,
+            "approver": None,
+            "applied_at": None,
+            "applied_at_kst": None,
+            "updated_at": get_now_utc(),
+            "updated_at_kst": get_now_kst_str()
+        }
+        result = await self.repo.collection.update_one(
+            {"word": word},
+            {"$set": update_data}
+        )
+        return result.modified_count > 0
 
 
 class DecompoundDictionaryService:
@@ -56,6 +102,31 @@ class DecompoundDictionaryService:
         return await self.repo.admin_search_deleted_by_keyword(keyword, skip, limit, sort_by, sort_order)
 
     async def create(self, req: DecompoundDictionaryCreateReq):
+        existing_doc = await self.repo.collection.find_one({"compound_word": req.compound_word})
+        
+        if existing_doc:
+            if existing_doc.get("delete_yn") == "N":
+                raise BizException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    message="이미 등록되어 있는 항목입니다."
+                )
+            else:
+                entity = DecompoundDictionaryEntity(**req.model_dump())
+                entity.index = existing_doc.get("index", 1)
+                entity.delete_yn = "N"
+                entity.status = DictionaryStatus.DRAFT
+                entity.approver = None
+                entity.applied_at = None
+                entity.applied_at_kst = None
+                entity.updated_at = get_now_utc()
+                entity.updated_at_kst = get_now_kst_str()
+                
+                await self.repo.collection.replace_one(
+                    {"_id": existing_doc["_id"]},
+                    entity.model_dump()
+                )
+                return entity
+
         entity = DecompoundDictionaryEntity(**req.model_dump())
         return await self.repo.create(entity)
 
@@ -66,7 +137,20 @@ class DecompoundDictionaryService:
         return await self.repo.update(compound_word, update_data)
 
     async def delete(self, compound_word: str):
-        return await self.repo.delete(compound_word)
+        update_data = {
+            "delete_yn": "Y",
+            "status": DictionaryStatus.DRAFT,
+            "approver": None,
+            "applied_at": None,
+            "applied_at_kst": None,
+            "updated_at": get_now_utc(),
+            "updated_at_kst": get_now_kst_str()
+        }
+        result = await self.repo.collection.update_one(
+            {"compound_word": compound_word},
+            {"$set": update_data}
+        )
+        return result.modified_count > 0
 
 
 class SynonymDictionaryService:
@@ -80,9 +164,31 @@ class SynonymDictionaryService:
         return await self.repo.admin_search_deleted_by_keyword(keyword, skip, limit, sort_by, sort_order)
 
     async def create(self, req: SynonymDictionaryCreateReq):
-        # synonyms는 List이므로, 리스트 자체를 key로 할수는 없으니(MongoDB에선 배열도 가능하긴 하지만) 
-        # 수정이나 삭제시 첫번째 단어등을 사용하거나, _id나 별도 키가 필요할 수 있습니다.
-        # Entity에서는 key_field="synonyms"로 잡았으나 부분배열 매칭 등 제약이 있을 수 있음.
+        existing_doc = await self.repo.collection.find_one({"synonyms": req.synonyms})
+        
+        if existing_doc:
+            if existing_doc.get("delete_yn") == "N":
+                raise BizException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    message="이미 등록되어 있는 항목입니다."
+                )
+            else:
+                entity = SynonymDictionaryEntity(**req.model_dump())
+                entity.index = existing_doc.get("index", 1)
+                entity.delete_yn = "N"
+                entity.status = DictionaryStatus.DRAFT
+                entity.approver = None
+                entity.applied_at = None
+                entity.applied_at_kst = None
+                entity.updated_at = get_now_utc()
+                entity.updated_at_kst = get_now_kst_str()
+                
+                await self.repo.collection.replace_one(
+                    {"_id": existing_doc["_id"]},
+                    entity.model_dump()
+                )
+                return entity
+
         entity = SynonymDictionaryEntity(**req.model_dump())
         return await self.repo.create(entity)
 
@@ -93,7 +199,20 @@ class SynonymDictionaryService:
         return await self.repo.update(synonyms, update_data)
 
     async def delete(self, synonyms: list):
-        return await self.repo.delete(synonyms)
+        update_data = {
+            "delete_yn": "Y",
+            "status": DictionaryStatus.DRAFT,
+            "approver": None,
+            "applied_at": None,
+            "applied_at_kst": None,
+            "updated_at": get_now_utc(),
+            "updated_at_kst": get_now_kst_str()
+        }
+        result = await self.repo.collection.update_one(
+            {"synonyms": synonyms},
+            {"$set": update_data}
+        )
+        return result.modified_count > 0
 
 
 class CorrectionDictionaryService:
@@ -107,6 +226,31 @@ class CorrectionDictionaryService:
         return await self.repo.admin_search_deleted_by_keyword(keyword, skip, limit, sort_by, sort_order)
 
     async def create(self, req: CorrectionDictionaryCreateReq):
+        existing_doc = await self.repo.collection.find_one({"incorrect": req.incorrect})
+        
+        if existing_doc:
+            if existing_doc.get("delete_yn") == "N":
+                raise BizException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    message="이미 등록되어 있는 항목입니다."
+                )
+            else:
+                entity = CorrectionDictionaryEntity(**req.model_dump())
+                entity.index = existing_doc.get("index", 1)
+                entity.delete_yn = "N"
+                entity.status = DictionaryStatus.DRAFT
+                entity.approver = None
+                entity.applied_at = None
+                entity.applied_at_kst = None
+                entity.updated_at = get_now_utc()
+                entity.updated_at_kst = get_now_kst_str()
+                
+                await self.repo.collection.replace_one(
+                    {"_id": existing_doc["_id"]},
+                    entity.model_dump()
+                )
+                return entity
+
         entity = CorrectionDictionaryEntity(**req.model_dump())
         return await self.repo.create(entity)
 
@@ -117,7 +261,20 @@ class CorrectionDictionaryService:
         return await self.repo.update(incorrect, update_data)
 
     async def delete(self, incorrect: str):
-        return await self.repo.delete(incorrect)
+        update_data = {
+            "delete_yn": "Y",
+            "status": DictionaryStatus.DRAFT,
+            "approver": None,
+            "applied_at": None,
+            "applied_at_kst": None,
+            "updated_at": get_now_utc(),
+            "updated_at_kst": get_now_kst_str()
+        }
+        result = await self.repo.collection.update_one(
+            {"incorrect": incorrect},
+            {"$set": update_data}
+        )
+        return result.modified_count > 0
 
 
 class StopwordDictionaryService:
@@ -131,6 +288,31 @@ class StopwordDictionaryService:
         return await self.repo.admin_search_deleted_by_keyword(keyword, skip, limit, sort_by, sort_order)
 
     async def create(self, req: StopwordDictionaryCreateReq):
+        existing_doc = await self.repo.collection.find_one({"word": req.word})
+        
+        if existing_doc:
+            if existing_doc.get("delete_yn") == "N":
+                raise BizException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    message="이미 등록되어 있는 항목입니다."
+                )
+            else:
+                entity = StopwordDictionaryEntity(**req.model_dump())
+                entity.index = existing_doc.get("index", 1)
+                entity.delete_yn = "N"
+                entity.status = DictionaryStatus.DRAFT
+                entity.approver = None
+                entity.applied_at = None
+                entity.applied_at_kst = None
+                entity.updated_at = get_now_utc()
+                entity.updated_at_kst = get_now_kst_str()
+                
+                await self.repo.collection.replace_one(
+                    {"_id": existing_doc["_id"]},
+                    entity.model_dump()
+                )
+                return entity
+
         entity = StopwordDictionaryEntity(**req.model_dump())
         return await self.repo.create(entity)
 
@@ -141,4 +323,17 @@ class StopwordDictionaryService:
         return await self.repo.update(word, update_data)
 
     async def delete(self, word: str):
-        return await self.repo.delete(word)
+        update_data = {
+            "delete_yn": "Y",
+            "status": DictionaryStatus.DRAFT,
+            "approver": None,
+            "applied_at": None,
+            "applied_at_kst": None,
+            "updated_at": get_now_utc(),
+            "updated_at_kst": get_now_kst_str()
+        }
+        result = await self.repo.collection.update_one(
+            {"word": word},
+            {"$set": update_data}
+        )
+        return result.modified_count > 0
