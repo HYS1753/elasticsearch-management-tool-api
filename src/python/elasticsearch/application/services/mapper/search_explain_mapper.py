@@ -15,6 +15,8 @@ from src.python.elasticsearch.application.schemas.responses.search.search_explai
     ExplainRescoreDetailRes,
     ExplainTermFactorRes,
     QueryExplainScoreTimelineStepRes,
+    QueryStructureNode,
+    ScoreSubDetail,
 )
 
 _SCORE_NORMALIZER_PREFIX = "score_normalizer_rescore"
@@ -129,7 +131,7 @@ def build_detail(
         source=source
     )
 
-    score_timeline = build_score_timeline(explanation, hit.get("_score"))
+    score_timeline = build_score_timeline(explanation, hit.get("_score"), request_body)
 
     return SearchExplainDetailRes(
         index=hit.get("_index", ""),
@@ -158,30 +160,151 @@ def _parse_summary_from_explanation(
             "rescore_steps": []
         }
 
-    desc = expl.get("description", "") or ""
+    # Extract original query explanation and rescore nodes using the traverse helper
+    query_expl, rescore_nodes = _traverse_rescore_explanation(expl)
+    
+    # 1. Base query score (before any function score or rescores)
+    query_score = query_expl.get("value") if query_expl else final_score
+    if query_score is None:
+        query_score = final_score
+        
+    rescore_steps: List[ExplainScoreStepRes] = []
+    
+    # 2. Add rescore steps
+    for idx, node in enumerate(rescore_nodes, start=1):
+        context = node.get("_rescore_context", {})
+        combining_desc = context.get("combining_desc", "")
+        combining_value = context.get("combining_value")
+        
+        # Determine operator
+        op = "+"
+        if "product of:" in combining_desc.lower() or "multiplied by:" in combining_desc.lower():
+            op = "*"
+        elif "max of:" in combining_desc.lower():
+            op = "max"
+        elif "min of:" in combining_desc.lower():
+            op = "min"
+        elif "mean of:" in combining_desc.lower() or "avg of:" in combining_desc.lower() or "average of:" in combining_desc.lower():
+            op = "avg"
+            
+        custom_node = _find_first_node_by_prefix(node, _SCORE_NORMALIZER_PREFIX)
+        if custom_node is not None:
+            # Custom normalizer step
+            normalizer_type = _find_normalizer_type(custom_node) or "unknown"
+            val = _find_factor_applied_score(custom_node) or node.get("value") or 0.0
+            
+            rescore_steps.append(
+                ExplainScoreStepRes(
+                    key=f"rescore_{idx}_score_normalizer_normalized",
+                    label=f"score_normalizer:{normalizer_type}",
+                    value=combining_value if combining_value is not None else val,
+                    formula_label=f"rescore{idx}:normalize({normalizer_type})",
+                    operator="->",
+                    operator_value=val
+                )
+            )
+        else:
+            # Standard rescore step
+            val = node.get("value") or 0.0
+            desc = node.get("description", "") or ""
+            
+            # Check for field value function
+            field_value_node = _find_first_node_contains(node, "field value function:")
+            if field_value_node is not None:
+                label = "query_rescore:field_value_factor"
+                formula_label = f"rescore{idx}:field_value_factor"
+            else:
+                function_score_node = _find_first_node_contains(node, "function score")
+                if function_score_node is not None:
+                    label = "query_rescore:function_score"
+                    formula_label = f"rescore{idx}:function_score"
+                else:
+                    label = f"rescore:{desc[:30]}" if desc else f"rescore{idx}"
+                    formula_label = f"rescore{idx}"
+                    
+            rescore_steps.append(
+                ExplainScoreStepRes(
+                    key=f"rescore_{idx}_generic",
+                    label=label,
+                    value=combining_value if combining_value is not None else val,  # Combined total score after this step
+                    formula_label=formula_label,
+                    operator=op,
+                    operator_value=val  # The contribution of the rescore query itself
+                )
+            )
+            
+    parsed = {
+        "query_score": query_score,
+        "rescore_steps": rescore_steps
+    }
 
-    if _is_query_root(desc):
-        return {
-            "query_score": expl.get("value"),
-            "rescore_steps": []
-        }
+    # 3. Resolve original query score vs function score for the main query
+    if query_expl:
+        original_text_score = _find_original_text_query_score(query_expl)
+        if original_text_score is not None:
+            parsed["query_score"] = original_text_score
+            final_query_score = query_expl.get("value") or 0.0
+            
+            # Detect function score operator from description
+            fs_node = _find_function_score_node(query_expl)
+            fs_desc = fs_node.get("description", "").lower() if fs_node else ""
+            fs_op = "*"
+            if "sum of:" in fs_desc:
+                fs_op = "+"
+            elif "min of:" in fs_desc:
+                fs_op = "min"
+            elif "max of:" in fs_desc:
+                fs_op = "max"
+            elif "replace" in fs_desc:
+                fs_op = "->"
+                
+            multiplier = 1.0
+            if fs_op == "*":
+                if original_text_score != 0:
+                    multiplier = final_query_score / original_text_score
+            elif fs_op == "+":
+                multiplier = final_query_score - original_text_score
+            else:
+                multiplier = final_query_score
 
-    if desc.startswith(_SCORE_NORMALIZER_PREFIX):
-        return _parse_single_custom_rescore_summary(expl)
+            fs_step = ExplainScoreStepRes(
+                key="query_function_score",
+                label="function_score",
+                value=final_query_score,
+                formula_label="function_score",
+                operator=fs_op,
+                operator_value=multiplier
+            )
+            parsed["rescore_steps"].insert(0, fs_step)
 
-    if desc.startswith("sum of:"):
-        return _parse_sum_root_summary(expl, final_score)
+    return parsed
+
+
+def _parse_max_root_summary(
+    expl: Dict[str, Any],
+    final_score: Optional[float] = None
+) -> Dict[str, Any]:
+    details = expl.get("details", []) or []
 
     query_score = _find_original_query_score(expl)
-    if query_score is not None:
-        return {
-            "query_score": query_score,
-            "rescore_steps": []
-        }
+    rescore_steps: List[ExplainScoreStepRes] = []
+
+    rescore_idx = 1
+    for d in details:
+        steps = _parse_rescore_step_node(d, rescore_idx, parent_op="max")
+        if steps:
+            rescore_steps.extend(steps)
+            rescore_idx += 1
+
+    if query_score is None:
+        if not rescore_steps:
+            query_score = expl.get("value")
+        else:
+            query_score = _find_original_query_score(expl)
 
     return {
-        "query_score": expl.get("value"),
-        "rescore_steps": []
+        "query_score": query_score,
+        "rescore_steps": rescore_steps
     }
 
 
@@ -200,7 +323,9 @@ def _parse_single_custom_rescore_summary(expl: Dict[str, Any]) -> Dict[str, Any]
                 key="score_normalizer_normalized",
                 label=f"score_normalizer:{normalizer_type or 'unknown'}",
                 value=normalized_score,
-                formula_label=f"normalize({normalizer_type or 'unknown'})"
+                formula_label=f"normalize({normalizer_type or 'unknown'})",
+                operator="->",
+                operator_value=normalized_score
             )
         )
 
@@ -210,7 +335,9 @@ def _parse_single_custom_rescore_summary(expl: Dict[str, Any]) -> Dict[str, Any]
                 key="score_normalizer_factor_applied",
                 label=f"score_normalizer_factor:{factor_mode or 'unknown'}",
                 value=factor_applied_score,
-                formula_label=f"factor({factor_mode or 'unknown'})"
+                formula_label=f"factor({factor_mode or 'unknown'})",
+                operator="->",
+                operator_value=factor_applied_score
             )
         )
 
@@ -229,13 +356,18 @@ def _parse_sum_root_summary(
     query_score = _find_original_query_score(expl)
     rescore_steps: List[ExplainScoreStepRes] = []
 
-    for idx, d in enumerate(details, start=1):
-        step = _parse_rescore_step_node(d, idx)
-        if step is not None:
-            rescore_steps.append(step)
+    rescore_idx = 1
+    for d in details:
+        steps = _parse_rescore_step_node(d, rescore_idx, parent_op="+")
+        if steps:
+            rescore_steps.extend(steps)
+            rescore_idx += 1
 
     if query_score is None:
-        query_score = _find_original_query_score(expl)
+        if not rescore_steps:
+            query_score = expl.get("value")
+        else:
+            query_score = _find_original_query_score(expl)
 
     return {
         "query_score": query_score,
@@ -243,51 +375,86 @@ def _parse_sum_root_summary(
     }
 
 
-def _parse_rescore_step_node(node: Dict[str, Any], idx: int) -> Optional[ExplainScoreStepRes]:
+def _parse_rescore_step_node(node: Dict[str, Any], idx: int, parent_op: str = "+") -> List[ExplainScoreStepRes]:
+    desc = node.get("description", "") or ""
+    if desc == "original query score":
+        return []
+
+    desc_lower = desc.lower()
+    if (
+        desc.startswith("weight(")
+        or desc.startswith("score(")
+        or "constantscore" in desc_lower
+        or "constant score" in desc_lower
+        or any(x in desc_lower for x in ["knn", "cosine similarity", "dot product", "l2", "within [0, 1]"])
+    ):
+        return []
+
+
     custom_node = _find_first_node_by_prefix(node, _SCORE_NORMALIZER_PREFIX)
     if custom_node is not None:
         normalizer_type = _find_normalizer_type(custom_node)
         factor_applied_score = _find_factor_applied_score(custom_node)
         normalized_score = _find_normalized_score(custom_node)
+        factor_mode = _find_factor_mode(custom_node)
 
-        step_value = factor_applied_score if factor_applied_score is not None else normalized_score
-
-        return ExplainScoreStepRes(
-            key=f"rescore_{idx}_score_normalizer",
-            label=f"score_normalizer:{normalizer_type or 'unknown'}",
-            value=step_value,
-            formula_label=f"rescore{idx}:{normalizer_type or 'score_normalizer'}"
-        )
+        steps = []
+        if normalized_score is not None:
+            steps.append(ExplainScoreStepRes(
+                key=f"rescore_{idx}_score_normalizer_normalized",
+                label=f"score_normalizer:{normalizer_type or 'unknown'}",
+                value=normalized_score,
+                formula_label=f"rescore{idx}:normalize({normalizer_type or 'unknown'})",
+                operator="->",
+                operator_value=normalized_score
+            ))
+        if factor_applied_score is not None:
+            steps.append(ExplainScoreStepRes(
+                key=f"rescore_{idx}_score_normalizer_factor_applied",
+                label=f"score_normalizer_factor:{factor_mode or 'unknown'}",
+                value=factor_applied_score,
+                formula_label=f"rescore{idx}:factor({factor_mode or 'unknown'})",
+                operator="->",
+                operator_value=factor_applied_score
+            ))
+        return steps
 
     field_value_node = _find_first_node_contains(node, "field value function:")
     if field_value_node is not None:
-        return ExplainScoreStepRes(
+        val = node.get("value")
+        return [ExplainScoreStepRes(
             key=f"rescore_{idx}_field_value_factor",
             label="query_rescore:field_value_factor",
-            value=node.get("value"),
-            formula_label=f"rescore{idx}:field_value_factor"
-        )
+            value=val,
+            formula_label=f"rescore{idx}:field_value_factor",
+            operator=parent_op,
+            operator_value=val
+        )]
 
     function_score_node = _find_first_node_contains(node, "function score")
     if function_score_node is not None:
-        return ExplainScoreStepRes(
+        val = node.get("value")
+        return [ExplainScoreStepRes(
             key=f"rescore_{idx}_function_score",
             label="query_rescore:function_score",
-            value=node.get("value"),
-            formula_label=f"rescore{idx}:function_score"
-        )
+            value=val,
+            formula_label=f"rescore{idx}:function_score",
+            operator=parent_op,
+            operator_value=val
+        )]
 
-    desc = node.get("description", "") or ""
     val = node.get("value")
     if val is not None and desc:
-        return ExplainScoreStepRes(
+        return [ExplainScoreStepRes(
             key=f"rescore_{idx}_generic",
             label=f"rescore:{desc}",
             value=val,
-            formula_label=f"rescore{idx}"
-        )
+            formula_label=f"rescore{idx}",
+            operator=parent_op,
+            operator_value=val
+        )]
 
-    return None
+    return []
 
 
 def _build_summary_formula(
@@ -306,97 +473,290 @@ def _build_summary_formula(
     valid_steps = [step for step in rescore_steps if step.value is not None]
 
     if query_score is None and valid_steps:
-        if len(valid_steps) == 1:
-            step = valid_steps[0]
-            label = step.formula_label or step.label or "rescore1"
-            if total_score is not None:
-                return f"{label}({step.value:.4f}) = total({float(total_score):.4f})"
-            return f"{label}({step.value:.4f})"
-
         expr_parts: List[str] = []
-        current_value = valid_steps[0].value
-        first_label = valid_steps[0].formula_label or valid_steps[0].label or "rescore1"
-        expr_parts.append(f"{first_label}({current_value:.4f})")
-
-        for step in valid_steps[1:]:
-            label = step.formula_label or step.label or "rescore"
-            expr_parts.append(f"{current_value:.4f} + {label}({step.value:.4f})")
-            current_value = current_value + step.value
-
+        for idx, step in enumerate(valid_steps):
+            label = step.formula_label or step.label or f"rescore{idx+1}"
+            op = step.operator or "->"
+            step_str = f"{label}({step.value:.4f})"
+            if idx == 0:
+                expr_parts.append(step_str)
+            else:
+                expr_parts.append(f"{op} {step_str}")
+        formula = " ".join(expr_parts)
         if total_score is not None:
-            return " | ".join(expr_parts) + f" = total({float(total_score):.4f})"
-        return " | ".join(expr_parts)
+            formula += f" = total({float(total_score):.4f})"
+        return formula
 
-    first_step = valid_steps[0] if valid_steps else None
-
-    if first_step is None:
-        if total_score is not None:
-            return f"query({query_score:.4f}) = total({float(total_score):.4f})"
-        return f"query({query_score:.4f})"
-
-    first_label = first_step.formula_label or first_step.label or "rescore1"
-    expressions: List[str] = [f"query({query_score:.4f}) -> {first_label}({first_step.value:.4f})"]
-
-    current_value = first_step.value
-
-    for step in valid_steps[1:]:
-        label = step.formula_label or step.label or "rescore"
-        expressions.append(f"{current_value:.4f} + {label}({step.value:.4f})")
-        current_value = current_value + step.value
-
+    expr_parts = [f"query({query_score:.4f})"]
+    for idx, step in enumerate(valid_steps):
+        label = step.formula_label or step.label or f"rescore{idx+1}"
+        op = step.operator or "->"
+        op_val = step.operator_value if step.operator_value is not None else step.value
+        if label == "function_score":
+            expr_parts.append(f"* boost({op_val:.4f})")
+        else:
+            expr_parts.append(f"{op} {label}({step.value:.4f})")
+            
+    formula = " ".join(expr_parts)
     if total_score is not None:
-        return " | ".join(expressions) + f" = total({float(total_score):.4f})"
-
-    return " | ".join(expressions)
+        formula += f" = total({float(total_score):.4f})"
+    return formula
 
 
 # =========================================================
 # Detail parsing
 # =========================================================
 
-def build_score_timeline(expl: Dict[str, Any], total_score: Optional[float]) -> List[QueryExplainScoreTimelineStepRes]:
+def _build_query_sub_details(
+    query_expl: Optional[Dict[str, Any]],
+    request_body: Optional[Dict[str, Any]] = None
+) -> List[ScoreSubDetail]:
+    """Build field-level sub_details for the query timeline step.
+    
+    Groups BM25 term factors by field and detects clause_type from
+    the request body's bool query structure.
+    """
+    if not query_expl:
+        return []
+
+    term_factors = _extract_term_factors(query_expl, request_body)
+    if not term_factors:
+        return []
+
+    # Determine clause membership for each field from request_body
+    field_clause_map = _build_field_clause_map(request_body)
+
+    # Group by field
+    grouped: Dict[str, List[ExplainTermFactorRes]] = {}
+    for factor in term_factors:
+        field_name = factor.field or "unknown"
+        if field_name not in grouped:
+            grouped[field_name] = []
+        grouped[field_name].append(factor)
+
+    sub_details: List[ScoreSubDetail] = []
+    for field_name, factors in grouped.items():
+        total_score = sum(f.score or 0.0 for f in factors)
+        tokens = [f.term or "?" for f in factors if f.term]
+        clause_type = field_clause_map.get(field_name, "must")
+
+        # Build human-readable description
+        token_parts = []
+        for f in factors:
+            token_label = f.term or "?"
+            score_val = f.score or 0.0
+            token_parts.append(f'"{token_label}" +{score_val:.2f}')
+        desc = ", ".join(token_parts) if token_parts else None
+
+        sub_details.append(ScoreSubDetail(
+            field=field_name,
+            score=total_score,
+            tokens=tokens,
+            clause_type=clause_type,
+            description=desc
+        ))
+
+    # Sort by score desc
+    sub_details.sort(key=lambda x: x.score or 0.0, reverse=True)
+    return sub_details
+
+
+def _build_field_clause_map(request_body: Optional[Dict[str, Any]]) -> Dict[str, str]:
+    """Map field names to their bool clause type (must/should/filter/knn)."""
+    result: Dict[str, str] = {}
+    if not request_body:
+        return result
+
+    # Check for KNN fields
+    knn_obj = request_body.get("knn")
+    if isinstance(knn_obj, dict):
+        knn_field = knn_obj.get("field")
+        if knn_field:
+            result[knn_field] = "knn"
+    elif isinstance(knn_obj, list):
+        for k in knn_obj:
+            if isinstance(k, dict):
+                knn_field = k.get("field")
+                if knn_field:
+                    result[knn_field] = "knn"
+
+    # Extract bool query clauses
+    bool_query = _extract_bool_query_from_request(request_body)
+    if not bool_query:
+        return result
+
+    for clause_type in ("must", "should", "filter"):
+        clauses = bool_query.get(clause_type, [])
+        if isinstance(clauses, dict):
+            clauses = [clauses]
+        for clause in clauses:
+            fields = _extract_fields_from_clause(clause)
+            for f in fields:
+                if f not in result:
+                    result[f] = clause_type
+
+    return result
+
+
+def _extract_fields_from_clause(clause: Dict[str, Any]) -> List[str]:
+    """Extract field names from a single bool clause (match, term, multi_match, etc.)."""
+    fields: List[str] = []
+    if not isinstance(clause, dict):
+        return fields
+
+    if "match" in clause:
+        fields.extend(clause["match"].keys())
+    elif "match_phrase" in clause:
+        fields.extend(clause["match_phrase"].keys())
+    elif "term" in clause:
+        fields.extend(clause["term"].keys())
+    elif "terms" in clause:
+        fields.extend(clause["terms"].keys())
+    elif "multi_match" in clause:
+        mm_fields = clause["multi_match"].get("fields", [])
+        for f in mm_fields:
+            # Strip boost notation like "field^2"
+            clean = f.split("^")[0].strip()
+            if clean:
+                fields.append(clean)
+    elif "dis_max" in clause:
+        for q in clause["dis_max"].get("queries", []):
+            fields.extend(_extract_fields_from_clause(q))
+    elif "bool" in clause:
+        for sub_clause_type in ("must", "should"):
+            sub_clauses = clause["bool"].get(sub_clause_type, [])
+            if isinstance(sub_clauses, dict):
+                sub_clauses = [sub_clauses]
+            for sc in sub_clauses:
+                fields.extend(_extract_fields_from_clause(sc))
+
+    return fields
+
+
+def build_score_timeline(
+    expl: Dict[str, Any],
+    total_score: Optional[float],
+    request_body: Optional[Dict[str, Any]] = None
+) -> List[QueryExplainScoreTimelineStepRes]:
     steps: List[QueryExplainScoreTimelineStepRes] = []
 
-    original_query_score = _find_original_query_score(expl)
-    if original_query_score is None and expl.get("value") is not None and _is_query_root(expl.get("description", "")):
-        original_query_score = expl.get("value")
+    # Get query explanation and rescore nodes
+    query_expl, rescore_nodes = _traverse_rescore_explanation(expl)
 
-    if original_query_score is not None:
+    # Build sub_details for the query step from term factors
+    query_sub_details = _build_query_sub_details(query_expl, request_body)
+
+    # 1. Add original text query score and function score if present
+    original_text_score = None
+    if query_expl:
+        original_text_score = _find_original_text_query_score(query_expl)
+
+    if original_text_score is not None:
         steps.append(QueryExplainScoreTimelineStepRes(
             key="query",
             label="Original Query Score",
-            value=original_query_score,
-            description="검색어 매칭으로 계산된 원본 점수"
+            value=original_text_score,
+            description="검색어 매칭으로 계산된 원본 점수",
+            operator=None,
+            operator_value=None,
+            sub_details=query_sub_details
         ))
+        
+        final_query_score = query_expl.get("value") or 0.0
+        
+        # Detect function score operator from description
+        fs_node = _find_function_score_node(query_expl)
+        fs_desc = fs_node.get("description", "").lower() if fs_node else ""
+        fs_op = "*"
+        if "sum of:" in fs_desc:
+            fs_op = "+"
+        elif "min of:" in fs_desc:
+            fs_op = "min"
+        elif "max of:" in fs_desc:
+            fs_op = "max"
+        elif "replace" in fs_desc:
+            fs_op = "->"
+            
+        multiplier = 1.0
+        if fs_op == "*":
+            if original_text_score != 0:
+                multiplier = final_query_score / original_text_score
+            op_desc = f"x{multiplier:.4f}"
+        elif fs_op == "+":
+            multiplier = final_query_score - original_text_score
+            op_desc = f"+{multiplier:.4f}"
+        else:
+            multiplier = final_query_score
+            op_desc = f"-> {multiplier:.4f}"
+            
+        steps.append(QueryExplainScoreTimelineStepRes(
+            key="function_score",
+            label="Function Score",
+            value=final_query_score,
+            description=f"가중치 함수 적용 결과 (배율: {op_desc})",
+            operator=fs_op,
+            operator_value=multiplier
+        ))
+    else:
+        original_query_score = query_expl.get("value") if query_expl else None
+        if original_query_score is None and expl.get("value") is not None and _is_query_root(expl.get("description", "")):
+            original_query_score = expl.get("value")
+            
+        if original_query_score is not None:
+            steps.append(QueryExplainScoreTimelineStepRes(
+                key="query",
+                label="Original Query Score",
+                value=original_query_score,
+                description="검색어 매칭으로 계산된 원본 점수",
+                operator=None,
+                operator_value=None,
+                sub_details=query_sub_details
+            ))
 
-    rescore_nodes = _extract_rescore_nodes(expl)
-
+    # 2. Add rescore steps
     for idx, node in enumerate(rescore_nodes, start=1):
+        context = node.get("_rescore_context", {})
+        combining_desc = context.get("combining_desc", "")
+        combining_value = context.get("combining_value")
+        
+        # Determine operator
+        op = "+"
+        if "product of:" in combining_desc.lower() or "multiplied by:" in combining_desc.lower():
+            op = "*"
+        elif "max of:" in combining_desc.lower():
+            op = "max"
+        elif "min of:" in combining_desc.lower():
+            op = "min"
+        elif "mean of:" in combining_desc.lower() or "avg of:" in combining_desc.lower() or "average of:" in combining_desc.lower():
+            op = "avg"
+
         custom_node = _find_first_node_by_prefix(node, _SCORE_NORMALIZER_PREFIX)
         if custom_node is not None:
+            normalizer_type = _find_normalizer_type(custom_node) or "unknown"
+            val = _find_factor_applied_score(custom_node) or node.get("value") or 0.0
+            card_val = combining_value if combining_value is not None else val
+            
             steps.append(QueryExplainScoreTimelineStepRes(
                 key=f"rescore_{idx}_normalizer",
                 label=f"Rescore {idx}",
-                value=_find_factor_applied_score(custom_node) or node.get("value"),
-                description=f"score_normalizer:{_find_normalizer_type(custom_node) or 'unknown'}"
+                value=card_val,
+                description=f"score_normalizer:{normalizer_type}",
+                operator="->",
+                operator_value=val
             ))
             continue
 
-        field_value_nodes = _find_all_nodes_contains(node, "field value function:")
-        if field_value_nodes:
-            steps.append(QueryExplainScoreTimelineStepRes(
-                key=f"rescore_{idx}_function_score",
-                label=f"Rescore {idx}",
-                value=node.get("value"),
-                description="function_score / field_value_factor"
-            ))
-            continue
-
+        val = node.get("value") or 0.0
+        desc = node.get("description", "") or ""
+        card_val = combining_value if combining_value is not None else val
+        
         steps.append(QueryExplainScoreTimelineStepRes(
             key=f"rescore_{idx}",
             label=f"Rescore {idx}",
-            value=node.get("value"),
-            description=node.get("description")
+            value=card_val,
+            description=desc,
+            operator=op,
+            operator_value=val
         ))
 
     if total_score is not None:
@@ -404,7 +764,9 @@ def build_score_timeline(expl: Dict[str, Any], total_score: Optional[float]) -> 
             key="total",
             label="Total Score",
             value=total_score,
-            description="최종 점수"
+            description="최종 점수",
+            operator=None,
+            operator_value=None
         ))
 
     return steps
@@ -428,20 +790,30 @@ def build_query_detail(
             function_boost_mode=query_fs_meta.get("boost_mode"),
             function_score_combined=None,
             final_query_score=fallback_score,
+            query_structure=None,
         )
 
-    term_factors = _extract_term_factors(query_expl)
+    term_factors = _extract_term_factors(query_expl, request_body)
     function_scores = build_query_function_scores(
         query_expl=query_expl,
         request_body=request_body,
         source=source
     )
 
-    function_score_combined = _find_query_function_combined_score(query_expl)
+    original_score = _find_original_text_query_score(query_expl)
     final_query_score = query_expl.get("value") if query_expl.get("value") is not None else fallback_score
+    if original_score is None:
+        original_score = final_query_score
+
+    function_score_combined = _find_query_function_combined_score(query_expl)
+    if function_score_combined is None and original_score is not None and final_query_score is not None:
+        if original_score != 0 and abs(final_query_score - original_score) > 1e-5:
+            function_score_combined = final_query_score / original_score
+
+    query_structure = _parse_query_structure(query_expl, request_body)
 
     return ExplainQueryDetailRes(
-        original_score=_find_original_text_query_score(query_expl) or final_query_score,
+        original_score=original_score,
         filters=build_filter_matches(request_body, source),
         bm25_groups=build_field_score_groups(term_factors, source),
         function_scores=function_scores,
@@ -449,6 +821,7 @@ def build_query_detail(
         function_boost_mode=query_fs_meta.get("boost_mode"),
         function_score_combined=function_score_combined,
         final_query_score=final_query_score,
+        query_structure=query_structure,
     )
 
 
@@ -495,6 +868,19 @@ def build_filter_matches(request_body: Dict[str, Any], source: Dict[str, Any]) -
 
     return results
 
+def _find_function_score_node(node: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not node:
+        return None
+    desc = node.get("description", "") or ""
+    if "function score" in desc.lower():
+        return node
+    for child in node.get("details", []) or []:
+        found = _find_function_score_node(child)
+        if found is not None:
+            return found
+    return None
+
+
 def _find_original_text_query_score(query_expl: Dict[str, Any]) -> Optional[float]:
     """
     query_expl 안에서 function score 적용 전 text score(BM25 aggregate)를 찾는다.
@@ -503,16 +889,16 @@ def _find_original_text_query_score(query_expl: Dict[str, Any]) -> Optional[floa
     if not query_expl:
         return None
 
-    # "function score, product of:" 아래 첫 detail이 텍스트 점수인 경우가 많음
-    function_score_node = _find_first_node_contains(query_expl, "function score, product of:")
-    if function_score_node:
-        details = function_score_node.get("details", []) or []
+    fs_node = _find_function_score_node(query_expl)
+    if fs_node:
+        details = fs_node.get("details", []) or []
         if details:
             first = details[0]
             if isinstance(first.get("value"), (int, float)):
                 return first.get("value")
 
     return None
+
 
 def _extract_query_function_score_meta(request_body: Dict[str, Any]) -> Dict[str, Any]:
     query = request_body.get("query", {}) or {}
@@ -563,6 +949,13 @@ def build_field_score_groups(
                 boost=factor.boost,
                 idf=factor.idf,
                 tf=factor.tf,
+                freq=factor.freq,
+                dl=factor.dl,
+                avgdl=factor.avgdl,
+                n_val=factor.n_val,
+                N_val=factor.N_val,
+                k1=factor.k1,
+                b=factor.b,
                 description=f"freq={factor.freq}, dl={factor.dl}, avgdl={factor.avgdl}"
             )
         )
@@ -687,6 +1080,21 @@ def normalize_rescores(request_rescores):
         return request_rescores
     return []
 
+def combining_desc_to_score_mode(desc: str) -> str:
+    if not desc:
+        return "total"
+    desc_lower = desc.lower()
+    if "product of:" in desc_lower or "multiplied by:" in desc_lower:
+        return "multiply"
+    if "max of:" in desc_lower:
+        return "max"
+    if "min of:" in desc_lower:
+        return "min"
+    if "mean of:" in desc_lower or "avg of:" in desc_lower or "average of:" in desc_lower:
+        return "avg"
+    return "total"
+
+
 def build_rescore_details(
     rescore_nodes: List[Dict[str, Any]],
     request_body: Dict[str, Any],
@@ -705,15 +1113,25 @@ def build_rescore_details(
             else {}
         )
 
+        context = node.get("_rescore_context", {})
+        combining_desc = context.get("combining_desc", "")
+        combined_score = context.get("combining_value")
+        if combined_score is None:
+            combined_score = node.get("value")
+        rescore_query_score = node.get("value")
+
         custom_node = _find_first_node_by_prefix(node, _SCORE_NORMALIZER_PREFIX)
         if custom_node is not None:
+            normalizer_type = _find_normalizer_type(custom_node) or "unknown"
             results.append(
                 ExplainRescoreDetailRes(
                     order=idx,
                     type="score_normalizer",
                     title=f"Rescore {idx} - Score Normalizer",
-                    score=_find_factor_applied_score(custom_node) or custom_node.get("value"),
-                    description=f"normalizer={_find_normalizer_type(custom_node)}, factor_mode={_find_factor_mode(custom_node)}",
+                    score=combined_score,
+                    rescore_query_score=rescore_query_score,
+                    rescore_query_structure=_parse_query_structure(node, request_body),
+                    description=f"normalizer={normalizer_type}, factor_mode={_find_factor_mode(custom_node)}",
                     details=[
                         ExplainFunctionScoreRes(
                             label="Original Query Score",
@@ -749,19 +1167,19 @@ def build_rescore_details(
                             params=None
                         )
                     ],
-                    score_mode=None,
+                    score_mode=req_rescore.get("score_mode") or "total",
                     boost_mode=None,
-                    query_weight=None,
-                    rescore_query_weight=None,
+                    query_weight=req_rescore.get("query", {}).get("query_weight", 1.0),
+                    rescore_query_weight=req_rescore.get("query", {}).get("rescore_query_weight", 1.0),
                 )
             )
             continue
 
         meta = _extract_rescore_function_meta(req_rescore)
-        score_mode = meta["score_mode"]
+        score_mode = meta["score_mode"] or combining_desc_to_score_mode(combining_desc) or "total"
         boost_mode = meta["boost_mode"]
-        query_weight = meta["query_weight"]
-        rescore_query_weight = meta["rescore_query_weight"]
+        query_weight = meta["query_weight"] if meta["query_weight"] is not None else 1.0
+        rescore_query_weight = meta["rescore_query_weight"] if meta["rescore_query_weight"] is not None else 1.0
         functions = meta["functions"]
 
         detail_items: List[ExplainFunctionScoreRes] = []
@@ -794,16 +1212,20 @@ def build_rescore_details(
                 )
             )
 
+        rescore_query_structure = _parse_query_structure(node, request_body)
+
         results.append(
             ExplainRescoreDetailRes(
                 order=idx,
-                type="query_rescore_function_score",
-                title=f"Rescore {idx} - Function Score",
-                score=node.get("value"),
+                type="query_rescore_function_score" if functions else "query_rescore",
+                title=f"Rescore {idx} - Function Score" if functions else f"Rescore {idx} - Match/Query Rescore",
+                score=combined_score,
+                rescore_query_score=rescore_query_score,
+                rescore_query_structure=rescore_query_structure,
                 description=(
-                    f"rescore query의 function_score 결과 | "
+                    f"rescore query 결과 | "
                     f"query_weight={query_weight}, rescore_query_weight={rescore_query_weight} | "
-                    f"score_mode={score_mode}, boost_mode={boost_mode}"
+                    f"score_mode={score_mode}" + (f", boost_mode={boost_mode}" if boost_mode else "")
                 ),
                 details=detail_items,
                 score_mode=score_mode,
@@ -815,6 +1237,7 @@ def build_rescore_details(
 
     return results
 
+
 def _extract_rescore_function_meta(req_rescore: Dict[str, Any]) -> Dict[str, Any]:
     query_rescore = req_rescore.get("query", {}) or {}
     rescore_query = query_rescore.get("rescore_query", {}) or {}
@@ -823,7 +1246,7 @@ def _extract_rescore_function_meta(req_rescore: Dict[str, Any]) -> Dict[str, Any
     return {
         "query_weight": query_rescore.get("query_weight"),
         "rescore_query_weight": query_rescore.get("rescore_query_weight"),
-        "score_mode": fs.get("score_mode"),
+        "score_mode": req_rescore.get("score_mode"),
         "boost_mode": fs.get("boost_mode"),
         "functions": fs.get("functions", []) or [],
     }
@@ -1232,67 +1655,119 @@ def _find_span_near_rewritten_parent(
 # Explain tree extractors
 # =========================================================
 
-def _extract_query_explanation_tree(expl: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    if not expl:
+def _is_rescore_root(node: Dict[str, Any]) -> bool:
+    if not node:
+        return False
+    details = node.get("details", []) or []
+    return any(d.get("description") == "original query score" for d in details)
+
+
+def _find_shallowest_original_query_node(node: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    if not node:
         return None
-
-    desc = expl.get("description", "") or ""
-
-    if _is_query_root(desc):
-        return expl
-
-    original_query_node = _find_first_node_by_exact_description(expl, "original query score")
-    if original_query_node:
-        details = original_query_node.get("details", []) or []
-        if details:
-            return details[0]
-        return original_query_node
-
+    queue = [node]
+    while queue:
+        curr = queue.pop(0)
+        details = curr.get("details", []) or []
+        for d in details:
+            if d.get("description") == "original query score":
+                return d
+            queue.append(d)
     return None
 
 
+def _find_previous_score_node(node: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    if not node:
+        return None
+    details = node.get("details", []) or []
+    # 1. Check direct children for "original query score"
+    for d in details:
+        if d.get("description") == "original query score":
+            return d
+    # 2. Check direct children for score normalizer prefix
+    for d in details:
+        desc = d.get("description", "") or ""
+        if desc.startswith(_SCORE_NORMALIZER_PREFIX):
+            return d
+    # 3. Fallback to recursive BFS search
+    return _find_shallowest_original_query_node(node)
+
+
+def _traverse_rescore_explanation(node: Dict[str, Any]) -> tuple[Dict[str, Any], list[Dict[str, Any]]]:
+    if not node:
+        return {}, []
+
+    # Find the previous score node under node
+    orig_node = _find_previous_score_node(node)
+
+    if orig_node is not None:
+        # If orig_node is found, recursively traverse its details to get the base query tree
+        orig_details = orig_node.get("details", []) or []
+        if orig_details:
+            inner_expl, inner_steps = _traverse_rescore_explanation(orig_details[0])
+        else:
+            inner_expl, inner_steps = orig_node, []
+
+        # Determine the rescore step node(s) for the current level
+        details = node.get("details", []) or []
+        is_direct_child = any(d is orig_node for d in details)
+
+        if is_direct_child:
+            desc = orig_node.get("description", "") or ""
+            if desc.startswith(_SCORE_NORMALIZER_PREFIX):
+                # If the previous score node is a normalizer, it is a custom step itself
+                step_nodes = [orig_node]
+            else:
+                step_nodes = [d for d in details if d is not orig_node]
+        else:
+            # Custom nested rescore (like score_normalizer): the current node itself is the step node
+            step_nodes = [node]
+
+        combining_desc = node.get("description", "") or ""
+        combining_value = node.get("value")
+
+        annotated_step_nodes = []
+        for s_node in step_nodes:
+            annotated = dict(s_node)
+            annotated["_rescore_context"] = {
+                "combining_desc": combining_desc,
+                "combining_value": combining_value,
+                "original_query_score": orig_node.get("value")
+            }
+            annotated_step_nodes.append(annotated)
+
+        return inner_expl, inner_steps + annotated_step_nodes
+
+    return node, []
+
+
+def _extract_query_explanation_tree(expl: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    query_expl, _ = _traverse_rescore_explanation(expl)
+    return query_expl
+
+
 def _extract_rescore_nodes(expl: Dict[str, Any]) -> List[Dict[str, Any]]:
-    if not expl:
-        return []
+    _, rescore_nodes = _traverse_rescore_explanation(expl)
+    return rescore_nodes
 
-    desc = expl.get("description", "") or ""
-
-    if desc.startswith("sum of:"):
-        details = expl.get("details", []) or []
-        return [d for d in details if _is_rescore_candidate(d)]
-
-    if desc.startswith(_SCORE_NORMALIZER_PREFIX):
-        return [expl]
-
-    return []
-
-
-def _is_rescore_candidate(node: Dict[str, Any]) -> bool:
-    if _find_first_node_by_prefix(node, _SCORE_NORMALIZER_PREFIX) is not None:
-        return True
-
-    if _find_first_node_contains(node, "field value function:") is not None:
-        return True
-
-    if _find_first_node_contains(node, "secondaryWeight") is not None:
-        return True
-
-    if _find_first_node_contains(node, "primaryWeight") is not None:
-        return True
-
-    return False
 
 
 # =========================================================
 # Term extraction
 # =========================================================
 
-def _extract_term_factors(expl: Dict[str, Any]) -> List[ExplainTermFactorRes]:
+def _extract_term_factors(
+    expl: Dict[str, Any],
+    request_body: Optional[Dict[str, Any]] = None
+) -> List[ExplainTermFactorRes]:
     results: List[ExplainTermFactorRes] = []
 
     def walk(node: Dict[str, Any]):
         desc = node.get("description", "") or ""
-        m = re.match(r'weight\(([^:]+):(.+?) in \d+\)', desc)
+        
+        # 1. BM25 weight
+        m = re.match(r'weight\(([^:]+):(.+?)(?:\s+in\s+\d+)?\)', desc)
+            
         if m:
             field = m.group(1)
             term = m.group(2)
@@ -1301,7 +1776,8 @@ def _extract_term_factors(expl: Dict[str, Any]) -> List[ExplainTermFactorRes]:
             factor = ExplainTermFactorRes(field=field, term=term, score=score)
 
             def walk_term(n: Dict[str, Any]):
-                nd = (n.get("description", "") or "").lower()
+                desc_raw = n.get("description", "") or ""
+                nd = desc_raw.lower()
                 if nd == "boost":
                     factor.boost = n.get("value")
                 elif nd.startswith("idf,"):
@@ -1314,12 +1790,45 @@ def _extract_term_factors(expl: Dict[str, Any]) -> List[ExplainTermFactorRes]:
                     factor.dl = n.get("value")
                 elif nd.startswith("avgdl,"):
                     factor.avgdl = n.get("value")
+                elif desc_raw.startswith("n, "):
+                    factor.n_val = n.get("value")
+                elif desc_raw.startswith("N, "):
+                    factor.N_val = n.get("value")
+                elif desc_raw.startswith("k1, "):
+                    factor.k1 = n.get("value")
+                elif desc_raw.startswith("b, "):
+                    factor.b = n.get("value")
 
                 for c in n.get("details", []) or []:
                     walk_term(c)
 
             walk_term(node)
             results.append(factor)
+            return
+
+        # 2. KNN similarity
+        elif any(x in desc.lower() for x in ["knn", "cosine similarity", "dot product", "l2", "within [0, 1]"]):
+            field = None
+            m_field = re.search(r"field:\s*([a-zA-Z0-9_\-]+)", desc)
+            if m_field:
+                field = m_field.group(1)
+            else:
+                field = _find_knn_field_from_request(request_body)
+
+            if field:
+                factor = ExplainTermFactorRes(
+                    field=field,
+                    term="[Vector]",
+                    score=node.get("value"),
+                    boost=1.0,
+                    idf=1.0,
+                    tf=1.0,
+                    freq=1.0,
+                    dl=1.0,
+                    avgdl=1.0
+                )
+                results.append(factor)
+                return
 
         for child in node.get("details", []) or []:
             walk(child)
@@ -1335,7 +1844,125 @@ def _extract_term_factors(expl: Dict[str, Any]) -> List[ExplainTermFactorRes]:
 def _is_query_root(description: str) -> bool:
     if not description:
         return False
-    return description.startswith("weight(") or description.startswith("score(")
+    desc_lower = description.lower()
+    return (
+        description.startswith("weight(")
+        or description.startswith("score(")
+        or description.startswith("max of")
+        or "knn" in desc_lower
+        or "cosine similarity" in desc_lower
+        or "dot product" in desc_lower
+        or "l2" in desc_lower
+        or "within [0, 1]" in desc_lower
+    )
+
+
+def _parse_query_structure(
+    node: Optional[Dict[str, Any]],
+    request_body: Optional[Dict[str, Any]] = None
+) -> Optional[QueryStructureNode]:
+    if not node:
+        return None
+
+    desc = node.get("description", "") or ""
+    val = node.get("value", 0.0)
+
+    node_type = "unknown"
+    field = None
+    term = None
+    tie_breaker = None
+
+    if desc.startswith("sum of:"):
+        node_type = "sum_of"
+    elif desc.startswith("max of"):
+        node_type = "max_of"
+        m = re.search(r"max of plus\s+([0-9.]+)\s+times", desc)
+        if m:
+            tie_breaker = float(m.group(1))
+        else:
+            tie_breaker = 0.0
+    elif desc.startswith("min of:"):
+        node_type = "min_of"
+    elif desc.startswith("mean of:") or desc.startswith("avg of:") or desc.startswith("average of:"):
+        node_type = "mean_of"
+    elif desc.startswith("product of:") or desc.startswith("multiplied by:"):
+        node_type = "product_of"
+    elif any(x in desc.lower() for x in ["knn", "cosine similarity", "dot product", "l2", "within [0, 1]"]):
+        node_type = "knn"
+        m = re.search(r"field:\s*([a-zA-Z0-9_\-]+)", desc)
+        if m:
+            field = m.group(1)
+        else:
+            field = _find_knn_field_from_request(request_body)
+        term = "[Vector]"
+    elif desc.startswith("weight(") or desc.startswith("score("):
+        node_type = "bm25"
+        # Split on first colon to extract field and term robustly (handles span queries and other wrappers)
+        if ":" in desc:
+            parts = desc.split(":", 1)
+            left, right = parts[0].strip(), parts[1].strip()
+            m_field = re.search(r'([a-zA-Z0-9_\.\-]+)$', left)
+            if m_field:
+                field = m_field.group(1)
+            
+            if right.startswith('"'):
+                m_term = re.match(r'^"([^"]+)"', right)
+                if m_term:
+                    term = m_term.group(1)
+            else:
+                m_term = re.match(r'^([^)\s]+)', right)
+                if m_term:
+                    term = m_term.group(1)
+        
+        if not field or not term:
+            m = re.match(r'weight\(([^:]+):(.+?)(?:\s+in\s+\d+)?\)', desc)
+            if m:
+                field = m.group(1)
+                term = m.group(2)
+            else:
+                node_type = "weight"
+    elif "function score" in desc.lower():
+        node_type = "function_score"
+    elif "constantscore" in desc.lower() or "constant score" in desc.lower():
+        node_type = "constant_score"
+
+    details = node.get("details", []) or []
+    child_nodes = []
+    for d in details:
+        child = _parse_query_structure(d, request_body)
+        if child:
+            child_nodes.append(child)
+
+    return QueryStructureNode(
+        type=node_type,
+        description=desc,
+        value=val,
+        field=field,
+        term=term,
+        tie_breaker=tie_breaker,
+        details=child_nodes
+    )
+
+
+def _find_knn_field_from_request(request_body: Optional[Dict[str, Any]]) -> Optional[str]:
+    if not request_body:
+        return None
+
+    knn_obj = request_body.get("knn")
+    if isinstance(knn_obj, dict):
+        return knn_obj.get("field")
+    elif isinstance(knn_obj, list) and len(knn_obj) > 0 and isinstance(knn_obj[0], dict):
+        return knn_obj[0].get("field")
+
+    query_obj = request_body.get("query", {})
+    if isinstance(query_obj, dict):
+        inner_knn = query_obj.get("knn")
+        if isinstance(inner_knn, dict):
+            return inner_knn.get("field")
+        elif isinstance(inner_knn, list) and len(inner_knn) > 0 and isinstance(inner_knn[0], dict):
+            return inner_knn[0].get("field")
+
+    return None
 
 
 def _find_original_query_score(node: Dict[str, Any]) -> Optional[float]:
@@ -1756,7 +2383,23 @@ def _find_query_function_combined_score(query_expl: Dict[str, Any]) -> Optional[
     query_expl 안에서 function score의 합산 결과를 찾는다.
     예: function score, score mode [sum]
     """
+    if not query_expl:
+        return None
+
     node = _find_first_node_contains(query_expl, "function score, score mode [")
     if node is not None:
         return node.get("value")
+
+    fs_node = _find_function_score_node(query_expl)
+    if fs_node:
+        details = fs_node.get("details", []) or []
+        node_val = fs_node.get("value")
+        if len(details) >= 2:
+            return details[1].get("value")
+        elif len(details) == 1:
+            first_val = details[0].get("value")
+            if node_val is not None and first_val is not None and first_val != 0:
+                if abs(node_val - first_val) > 1e-5:
+                    return node_val / first_val
+
     return None
